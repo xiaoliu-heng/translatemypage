@@ -10,7 +10,7 @@
   "sourcePublished": true,
   "privacyPolicyPublished": true,
   "privacyPolicyUrl": "https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md",
-  "releaseAssetsPublished": false,
+  "releaseAssetsPublished": true,
   "storeSubmitted": false,
   "storeUrl": null,
   "extensionId": null,
@@ -28,5 +28,9 @@
     "zipAudit": "passed",
     "nativeHelperHandshake": "passed_0.1.1",
     "edgeBrowserRuntime": "pending"
-  }
+  },
+  "releaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.1",
+  "releaseIsPrerelease": true,
+  "anonymousDownloadsVerified": true,
+  "sourceTreeCommit": "d4ea6849734caa522fd7884b69782a17a3965b90"
 }
