@@ -15,8 +15,18 @@
   "storeUrl": null,
   "extensionId": null,
   "edgeRuntimeTested": false,
-  "status": "preparing_not_submitted",
+  "status": "prepared_not_submitted",
   "blockers": [
-    "Microsoft Partner Center is at the personal Microsoft account sign-in page; account selection is pending."
-  ]
+    "Microsoft Partner Center is at the personal Microsoft account sign-in page; account selection is pending.",
+    "Microsoft Edge was installed from its official distribution via Homebrew, but its first launch is not responding; browser runtime testing is incomplete."
+  ],
+  "nativeHelperTested": true,
+  "validation": {
+    "typecheck": "passed",
+    "offlineTests": 38,
+    "build": "passed",
+    "zipAudit": "passed",
+    "nativeHelperHandshake": "passed_0.1.1",
+    "edgeBrowserRuntime": "pending"
+  }
 }

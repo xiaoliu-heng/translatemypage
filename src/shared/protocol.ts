@@ -1,7 +1,7 @@
 import { validSourceFormat } from './formatting';
 export const HOST_NAME = 'com.translatemypage.host';
 export const PROTOCOL = 1;
-export const VERSION = '0.1.0';
+export const VERSION = '0.1.1';
 export const MAX_FRAME = 128 * 1024;
 export const MAX_BATCH_CHARS = 12_000;
 export const MAX_SEGMENTS = 8;
