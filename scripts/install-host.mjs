@@ -18,8 +18,10 @@ if (args.includes('--uninstall')) {
   await rm(registration, { force: true }); console.log(`已注销助手：${registration}\n账号、钥匙串凭据和缓存保留；如需退出账号，请先在扩展中退出。`); process.exit(0);
 }
 const hostDist = join(root, 'dist/host');
-const config = JSON.parse(await readFile(join(hostDist, 'config.json'), 'utf8'));
-const extensionId = args.find(a => a.startsWith('--extension-id='))?.slice('--extension-id='.length) || config.extensionId;
+const extensionIdArg = args.find(a => a.startsWith('--extension-id='));
+const extensionId = extensionIdArg === undefined
+  ? JSON.parse(await readFile(join(hostDist, 'config.json'), 'utf8')).extensionId
+  : extensionIdArg.slice('--extension-id='.length);
 if (!/^[a-p]{32}$/.test(extensionId || '')) throw new Error('请提供 Chrome 商店条目的扩展 ID：--extension-id=32位小写ID。可以从商店网址末尾或扩展详情页复制。');
 const runtime = join(process.platform === 'darwin' ? join(homedir(), 'Library/Application Support') : process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'TranslateMyPage', 'runtime');
 if (args.includes('--dry-run')) {
