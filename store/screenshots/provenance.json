@@ -1,0 +1,34 @@
+{
+  "type": "actual_local_demo_captures",
+  "disclosure": "截图复用生产翻译代码、真实 Native Messaging Host 与实际翻译结果；原图仅裁切、等比缩放并添加网页演示标注，不含账号资料。",
+  "screenshots": [
+    {
+      "file": "01-ai-bilingual.png",
+      "source": "test-results/formatting/typography-top.jpg",
+      "crop": [
+        0,
+        143,
+        1130,
+        849
+      ],
+      "size": [
+        1280,
+        800
+      ]
+    },
+    {
+      "file": "02-selected-text.png",
+      "source": "test-results/mascot-motion/selection-result.jpg",
+      "crop": [
+        180,
+        400,
+        1353,
+        1133
+      ],
+      "size": [
+        1280,
+        800
+      ]
+    }
+  ]
+}
