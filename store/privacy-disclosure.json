@@ -3,11 +3,10 @@
   "permissions": {
     "activeTab": "仅在用户点击扩展或触发当前页翻译后取得当前普通网页的临时访问权限，用于阅读正文和显示译文。",
     "scripting": "将随扩展打包的内容提取、排版与翻译小球代码注入用户主动激活的当前页，不下载或执行远程脚本。",
-    "storage": "在 chrome.storage.local 中保存语言、模型、术语、排除规则、内容发送确认、随机安装标识及小球停靠位置；不保存 OAuth 秘密，不启用同步存储。",
-    "nativeMessaging": "连接另外安装的 com.translatemypage.host 本地助手，由它进行官方 OAuth、系统凭据库访问、模型调用、队列与本机缓存。"
+    "storage": "Local preferences, random host ID, issued client IDs and hashed account bindings only. Translation cache uses extension IndexedDB. OAuth credentials remain only in session-page memory."
   },
   "remoteCode": false,
-  "remoteCodeExplanation": "扩展可执行代码全部打包在上传的 ZIP 中。OpenAI 返回的是经校验的翻译数据，不会作为 JavaScript 或 HTML 执行。本地助手是用户单独安装、源码公开的 Native Messaging 依赖。",
+  "remoteCodeExplanation": "All executable code is bundled. Model output is validated data rendered through safe local DOM nodes.",
   "dataTypes": [
     "Personally identifiable information",
     "Authentication information",
@@ -15,8 +14,8 @@
     "Website content"
   ],
   "dataTypeNotes": {
-    "Personally identifiable information": "官方 OAuth 返回的账号姓名、邮箱与主体，用于账号管理，保存在本机。",
-    "Authentication information": "OAuth 凭据由本地助手经系统凭据库管理，仅发送给 OpenAI 的授权或模型端点。",
+    "Personally identifiable information": "Name, email and raw subject remain in session memory for account selection; not persisted.",
+    "Authentication information": "Callback and PKCE are used for one authorization. OAuth tokens remain in session-page memory, sent only to OpenAI, and never written to browser storage or logs.",
     "Web history": "当前主动激活网页的地址仅本地处理，用于站点术语、临时权限和页面生命周期；不使用浏览历史 API，不建立历史档案，不将完整地址加入模型请求。采用保守披露。",
     "Website content": "用户发起翻译的正文、选中文字、页面标题、命中的术语及生成的译文。"
   },
@@ -29,5 +28,9 @@
   "supportEmail": "xiaoliublog@gmail.com",
   "privacyPolicyUrl": "https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md",
   "privacyPolicyPublished": true,
-  "status": "store_submission_pending"
+  "status": "local_development_pending_end_to_end_verification",
+  "hostPermissions": {
+    "https://auth.openai.com/*": "Official code exchange, identity signature keys, refresh and revocation.",
+    "https://api.openai.com/*": "Account model catalog and translation requests."
+  }
 }

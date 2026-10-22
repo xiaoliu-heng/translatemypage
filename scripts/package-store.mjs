@@ -36,7 +36,7 @@ async function zip(name, dir) {
 
 const extension = join(stage, browser); await mkdir(extension);
 // Deliberate allowlist: never package the workspace, native credentials, recordings or browser profiles.
-for (const name of ['background.js', 'content.js', 'ui.js', 'popup.html', 'options.html', 'ui.css', 'content.css', 'privacy.html', 'icons', '_locales']) {
+for (const name of ['background.js', 'content.js', 'ui.js', 'popup.html', 'options.html', 'session.html', 'ui.css', 'content.css', 'privacy.html', 'icons', '_locales']) {
   await copy(join(root, 'dist/extension', name), join(extension, name));
 }
 const manifest = JSON.parse(await readFile(join(root, 'dist/extension/manifest.json'), 'utf8'));
@@ -46,31 +46,28 @@ await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest, null,
 for (const name of ['background.js', 'content.js', 'ui.js']) await stripMap(join(extension, name));
 
 const notices = [];
-for (const name of ['jose', 'proper-lockfile', 'graceful-fs', 'retry', 'signal-exit']) {
+for (const name of ['jose']) {
   const dir = join(root, 'node_modules', name), meta = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'));
   const license = (await readdir(dir)).find(f => /^licen[cs]e(?:\.(?:md|txt))?$/i.test(f));
   if (!license) throw new Error(`Missing dependency license: ${name}`);
   notices.push(`${name} ${meta.version}\n${await readFile(join(dir, license), 'utf8')}`);
 }
-const helper = join(stage, 'helper'); await mkdir(helper);
-await copy(join(root, 'dist/host/host.cjs'), join(helper, 'dist/host/host.cjs')); await stripMap(join(helper, 'dist/host/host.cjs'));
-await writeFile(join(helper, 'dist/host/config.json'), JSON.stringify({ extensionId: extensionId || null }, null, 2) + '\n');
-for (const name of ['scripts/install-host.mjs', 'native/keychain.swift', 'LICENSE']) await copy(join(root, name), join(helper, name));
-await copy(join(root, browser === 'edge' ? 'store/edge/helper-README.txt' : 'store/helper-README.txt'), join(helper, 'README.txt'));
-await copy(join(root, 'store/privacy-policy.html'), join(helper, 'privacy-policy.html'));
-await writeFile(join(helper, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n----------------------------------------\n\n'));
+await writeFile(join(extension, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n'));
+await copy(join(root, 'LICENSE'), join(extension, 'LICENSE'));
 
 const source = join(stage, 'source'); await mkdir(source);
-for (const name of ['src', 'native', 'tests', 'assets', 'store', 'docs', 'package.json', 'package-lock.json', 'tsconfig.json', 'extension-public-key.json', 'README.md', 'PRIVACY.md', 'LICENSE', '.gitignore']) {
+for (const name of ['src', 'tests', 'assets', 'store', 'docs', 'package.json', 'package-lock.json', 'tsconfig.json', 'extension-public-key.json', 'README.md', 'PRIVACY.md', 'LICENSE', '.gitignore']) {
   await copy(join(root, name), join(source, name));
 }
-for (const name of ['build.mjs', 'install-host.mjs', 'package-store.mjs', 'store-assets.py', 'browser-smoke.mjs']) await copy(join(root, 'scripts', name), join(source, 'scripts', name));
+for (const name of ['build.mjs', 'package-store.mjs', 'store-assets.py']) await copy(join(root, 'scripts', name), join(source, 'scripts', name));
 const materials = join(stage, 'store-materials');
 if (browser === 'edge') {
   await copy(join(root, 'store/edge'), materials);
-  for (const name of ['assets', 'screenshots', 'privacy-disclosure.json', 'privacy-policy.html']) await copy(join(root, 'store', name), join(materials, name));
+  for (const name of ['assets', 'privacy-disclosure.json', 'privacy-policy.html']) await copy(join(root, 'store', name), join(materials, name));
 } else await copy(join(root, 'store'), materials);
-for (const dir of [extension, helper, source, materials]) {
+await rm(join(materials, 'screenshots'), { recursive: true, force: true });
+await writeFile(join(materials, 'SCREENSHOTS-PENDING.txt'), 'Capture current-version installed-extension screenshots before store submission. Historical v0.1.x screenshots are excluded.\n');
+for (const dir of [extension, source, materials]) {
   for (const path of await files(dir)) {
     const rel = relative(dir, path);
     if (/(^|\/)(?:\.local|\.git|node_modules|test-results|\.test-profile)(?:\/|$)|(?:\.log|\.map|\.pem|\.key)$/.test(rel)) throw new Error(`Unexpected private/generated entry: ${rel}`);
@@ -81,15 +78,15 @@ for (const dir of [extension, helper, source, materials]) {
   }
 }
 const archives = [];
-for (const [name, dir] of [[browser, extension], [browser === 'edge' ? 'edge-helper' : 'helper', helper], ['source', source], [browser === 'edge' ? 'edge-store-materials' : 'store-materials', materials]]) archives.push(await zip(name, dir));
+for (const [name, dir] of [[browser, extension], ['source', source], [browser === 'edge' ? 'edge-store-materials' : 'store-materials', materials]]) archives.push(await zip(name, dir));
 const state = { version, browser, publisher: 'xiaoliu-heng', supportEmail: 'xiaoliublog@gmail.com', extensionId: extensionId || null,
   status: 'prepared_not_submitted', publication, archives,
   pending: [
     ...(!publication.sourcePublished ? ['Publish audited source code and MIT license to the public repository'] : []),
     ...(!publication.privacyPolicyPublished ? ['Publish privacy policy and verify its public URL'] : []),
-    ...(!publication.releaseAssetsPublished ? ['Publish the local helper and source release assets'] : []),
+    ...(!publication.releaseAssetsPublished ? ['Publish the extension and source release assets'] : []),
     `${browser === 'edge' ? 'Microsoft Edge Add-ons' : 'Chrome Web Store'} developer account access and submission`,
-    ...(!extensionId ? ['Store-assigned extension ID; install helper with --extension-id or regenerate this archive after ID assignment'] : [])
+    'Manual callback login and real translation must be tested in the installed extension before store submission'
   ] };
 await writeFile(join(out, 'release-status.json'), JSON.stringify(state, null, 2) + '\n');
 await writeFile(join(out, 'SHA256SUMS.txt'), archives.map(a => `${a.sha256}  ${a.file.split('/').at(-1)}`).join('\n') + '\n');

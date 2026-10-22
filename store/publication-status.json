@@ -1,25 +1,32 @@
 {
   "checkedOn": "2026-10-22",
+  "browser": "chrome",
+  "version": "0.2.0",
+  "publisher": "xiaoliu-heng",
+  "supportEmail": "xiaoliublog@gmail.com",
+  "pricing": "free",
+  "license": "MIT",
   "repositoryUrl": "https://github.com/xiaoliu-heng/translatemypage",
-  "repositoryCreated": true,
-  "descriptionPublished": true,
-  "readmePublished": true,
-  "licensePublished": true,
-  "privacyCommit": "87e45406095947a321e02da471c2d203487ac153",
   "sourcePublished": true,
-  "sourceDistribution": "repository_and_release_zip",
   "privacyPolicyPublished": true,
-  "releaseAssetsPublished": true,
-  "browserFileUploadEnabled": true,
+  "releaseAssetsPublished": false,
   "storeSubmitted": false,
   "storeUrl": null,
+  "extensionId": null,
+  "status": "local_development_pending_end_to_end_verification",
+  "validation": {
+    "typecheck": "passed",
+    "offlineTests": 51,
+    "build": "passed",
+    "installedExtensionOAuth": "pending",
+    "realTranslation": "pending",
+    "currentVersionScreenshots": "pending",
+    "zipAudit": "passed"
+  },
+  "previousReleaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.1",
   "blockers": [
-    "Chrome browser automation still rejects navigation to the developer dashboard; no store item or review submission has been created."
-  ],
-  "sourceTreePublished": true,
-  "releaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.0",
-  "gitPushAuthenticated": true,
-  "anonymousDownloadsVerified": true,
-  "sourceTreeUrl": "https://github.com/xiaoliu-heng/translatemypage/tree/main",
-  "gitProtocol": "https"
+    "Installed-extension manual callback exchange and real translation must be verified.",
+    "Capture current-version screenshots before submission.",
+    "Verify developer dashboard access and complete the store submission."
+  ]
 }

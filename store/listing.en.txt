@@ -1,35 +1,28 @@
-Name
-TranslateMyPage: AI Bilingual Translation
+TranslateMyPage: AI Immersive Bilingual Translation
 
 Short description
-AI webpage and selected-text translation with formatting. Uses your authorized ChatGPT plan quota. Requires a macOS/Linux helper.
+AI webpage and selected-text translation with formatting. Can use your authorized ChatGPT plan quota. Extension only.
 
-Detailed description
-AI webpage translation for immersive bilingual reading.
+Description
+Translate webpages and selected text with the original alongside the translation. Free and open source under the MIT license.
 
-TranslateMyPage is an AI translation tool for web pages and selected text. Read the original and its translation together, preserve formatting, and translate passages in context. Translation requests can use the quota of your own ChatGPT plan, authorized through official Sign in with ChatGPT.
+Preserve the original font, size, color, spacing, links, emphasis, inline code and line breaks. Translate headings, paragraphs, lists and tables; restore the original whenever you like.
 
-Your ChatGPT plan
-Sign in on the official authorization page and choose from the models available to your account. You do not enter a separate OpenAI API key. Requests use your authorized ChatGPT plan. Model availability, eligibility and limits depend on your account, workspace and OpenAI settings.
+Select text and a draggable pet moves beside it with a pulsing loading light. A game-style dialogue shows the result. Sleeping eyes mean translation is off; a steady bulb means ready. Supports position memory, keyboard shortcuts, explicit retry and reduced motion.
 
-Read in two languages
-Display translations next to the original paragraphs. Preserve typography, links, emphasis and inline code. Supports headings, paragraphs, lists, tables, incremental dynamic content, and restoring the original page.
+Authorize on OpenAI's official page and choose from the current account's model catalog. Requests can share your authorized ChatGPT subscription quota without an API key. Models, eligibility and limits depend on OpenAI and workspace settings.
 
-Translate selected text
-After activating the current page, select reading text and release the pointer. A draggable companion approaches the selection, waits with a pulsing light, and opens a game-style dialogue when the result is ready. Alt+T, Escape, close and manual retry are supported.
+Installation and sign-in
+Install only the desktop browser extension; no native helper or Node.js runtime is required. Open the extension's Translation Session tab and start official sign-in. After authorization redirects to http://127.0.0.1:1455/auth/callback, the browser may show a connection error because no local listener is running. Copy the complete address-bar URL and paste it into the session page. The manual callback is a project-specific adaptation.
 
-A quiet reading companion
-Closed eyes indicate translation is off, a pulsing light indicates work in progress, and a steady light indicates readiness. Drag the companion to a preferred dock. Animated wake, travel, return and dialogue transitions respect reduced-motion preferences.
+Keep the session tab open. Closing or refreshing it, restarting the browser, or updating the extension ends the in-memory login; authorize again next time. Tokens are never persisted in browser storage.
 
-Local helper and data use
-Before the first translation, the app asks you to consent to sending text, the page title and matching glossary terms to OpenAI. Credentials remain in the operating system credential store, and translations are cached locally. Current-page access is granted after your action. Forms, passwords, editable fields and code blocks are excluded by default. Incognito is not supported.
+Privacy
+Content sharing is explained before the first translation. Requests go directly to OpenAI, without a developer-operated inference proxy, advertising or analytics. Translations are cached locally by account and can be cleared. Incognito, PDF, cross-origin frames and complex Shadow DOM are outside the current scope.
 
-Before installing
-• A separately installed Native Messaging helper is required. The Chrome extension alone cannot translate.
-• Supports macOS and Linux with a desktop Secret Service. Windows and ChromeOS are not supported yet.
-• Current helper installation requires Node.js 22.16+, Xcode Command Line Tools on macOS, or secret-tool and Secret Service on Linux.
-• Requires an eligible ChatGPT account with plan usage authorized. Translation requests count toward that plan's usage.
-• Standard HTTP/HTTPS pages are supported. Complex Shadow DOM, cross-origin iframes, PDF, subtitles and OCR are not currently supported.
-• The app interface is primarily Simplified Chinese. AI translations can be inaccurate; keep the original for comparison.
-
-TranslateMyPage is independently developed. ChatGPT and OpenAI are trademarks of their respective owners. This product is not an official OpenAI or Immersive Translate product and is not affiliated with either.
+AI translations may contain errors; check the original.
+Source: https://github.com/xiaoliu-heng/translatemypage
+Privacy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md
+Support: xiaoliublog@gmail.com
+Publisher: xiaoliu-heng
+Independent project; not affiliated with OpenAI, ChatGPT or Immersive Translate.

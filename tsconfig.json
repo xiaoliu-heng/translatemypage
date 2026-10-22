@@ -5,5 +5,5 @@
     "strict": true, "noEmit": true, "skipLibCheck": true, "esModuleInterop": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["src", "tests", "scripts/**/*.ts", "promo/**/*.ts"]
+  "include": ["src", "tests"]
 }

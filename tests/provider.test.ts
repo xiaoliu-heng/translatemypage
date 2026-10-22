@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ChatGPTPlanProvider, consumeSSE, validateOutput } from '../src/host/provider';
+import { ChatGPTPlanProvider, consumeSSE, validateOutput } from '../src/core/provider';
 import { params } from './helpers';
 function sse(events: any[], chunk = 7) {
   const bytes = new TextEncoder().encode(events.map(e => `data: ${JSON.stringify(e)}\r\n\r\n`).join(''));

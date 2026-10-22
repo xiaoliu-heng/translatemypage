@@ -1,41 +1,28 @@
-Name
-TranslateMyPage: AI Bilingual Translation
+TranslateMyPage: AI Immersive Bilingual Translation
 
 Short description
-AI webpage and selected-text translation with formatting. Uses your authorized ChatGPT plan quota. Requires a macOS/Linux helper.
+AI webpage and selected-text translation with formatting. Can use your authorized ChatGPT plan quota. Extension only.
 
-Detailed description
-AI webpage translation for immersive bilingual reading.
+Description
+Translate webpages and selected text with the original alongside the translation. Free and open source under the MIT license.
 
-TranslateMyPage is a free, open-source Microsoft Edge extension for webpages and selected text. Read original paragraphs and their translations together while retaining page formatting. Translation requests can use your own ChatGPT plan quota through official authorization.
+Preserve the original font, size, color, spacing, links, emphasis, inline code and line breaks. Translate headings, paragraphs, lists and tables; restore the original whenever you like.
 
-Installation requirements: a separately installed local helper is required. This release supports macOS and Linux with a desktop Secret Service. Windows, ChromeOS and mobile browsers are not supported. The helper requires Node.js 22.16+; macOS also needs Xcode Command Line Tools, and Linux needs secret-tool and xdg-open.
+Select text and a draggable pet moves beside it with a pulsing loading light. A game-style dialogue shows the result. Sleeping eyes mean translation is off; a steady bulb means ready. Supports position memory, keyboard shortcuts, explicit retry and reduced motion.
 
-Read in two languages
-Display translations next to the original paragraphs. Preserve typography, links, emphasis and inline code. Supports headings, paragraphs, lists, tables, incremental dynamic content and restoring the original page.
+Authorize on OpenAI's official page and choose from the current account's model catalog. Requests can share your authorized ChatGPT subscription quota without an API key. Models, eligibility and limits depend on OpenAI and workspace settings.
 
-Translate selected text
-After activating the current page, select reading text and release the pointer. A draggable companion approaches the selection, waits with a pulsing light and opens a game-style dialogue when the result is ready. Alt+T, Escape, close and manual retry are supported.
+Installation and sign-in
+Install only the desktop browser extension; no native helper or Node.js runtime is required. Open the extension's Translation Session tab and start official sign-in. After authorization redirects to http://127.0.0.1:1455/auth/callback, the browser may show a connection error because no local listener is running. Copy the complete address-bar URL and paste it into the session page. The manual callback is a project-specific adaptation.
 
-A reading companion
-Closed eyes indicate translation is off, a pulsing light indicates work in progress and a steady light indicates readiness. Drag the companion to a preferred position. Wake, travel and dialogue animations respect reduced-motion preferences.
+Keep the session tab open. Closing or refreshing it, restarting the browser, or updating the extension ends the in-memory login; authorize again next time. Tokens are never persisted in browser storage.
 
-Use your own ChatGPT plan quota
-Sign in on the official authorization page and choose from models actually available to your account. No separate OpenAI API key is required. Requests count toward your authorized ChatGPT plan's usage. Model availability, eligibility and limits depend on your account, workspace and OpenAI settings. TranslateMyPage is free under the MIT license and adds no subscription fee.
+Privacy
+Content sharing is explained before the first translation. Requests go directly to OpenAI, without a developer-operated inference proxy, advertising or analytics. Translations are cached locally by account and can be cleared. Incognito, PDF, cross-origin frames and complex Shadow DOM are outside the current scope.
 
-Local helper and privacy
-The helper handles account connection, operating-system credential storage and translation requests; the extension handles webpage content and translation display. Edge starts the helper as needed. AI inference runs at OpenAI. Credentials remain in macOS Keychain / Linux Secret Service, and translations are cached locally. Requests go directly to OpenAI, without a developer-operated inference proxy, advertising or analytics SDK.
-
-Before the first translation, the app asks for consent to send text, the page title and matching glossary terms to OpenAI. Current-page access follows your action. Forms, passwords, editable fields and code blocks are excluded by default. Incognito is not supported.
-
-Before installing
-• The Edge extension alone cannot translate. Download and install the helper using the setup instructions.
-• Requires an eligible ChatGPT account with plan usage authorized.
-• Standard HTTP/HTTPS main-document content is supported. Complex Shadow DOM, cross-origin iframes, PDF, EPUB, subtitles and OCR are outside this release's scope.
-• The interface is primarily Simplified Chinese. AI translations can be inaccurate; keep the original for comparison.
-
-Source and installation: https://github.com/xiaoliu-heng/translatemypage
-Helper downloads: https://github.com/xiaoliu-heng/translatemypage/releases
+AI translations may contain errors; check the original.
+Source: https://github.com/xiaoliu-heng/translatemypage
+Privacy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md
 Support: xiaoliublog@gmail.com
-
-TranslateMyPage is independently developed and is not affiliated with Microsoft, OpenAI, ChatGPT or Immersive Translate.
+Publisher: xiaoliu-heng
+Independent project; not affiliated with OpenAI, ChatGPT or Immersive Translate.

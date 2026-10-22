@@ -1,4 +1,4 @@
-import { AppError, DEFAULT_SETTINGS, fingerprint, HostEvent, MAX_BATCH_CHARS, MAX_SEGMENTS, PROMPT_VERSION, Segment, Settings, Status } from '../shared/protocol';
+import { AppError, DEFAULT_SETTINGS, fingerprint, SessionEvent, MAX_BATCH_CHARS, MAX_SEGMENTS, PROMPT_VERSION, Segment, Settings, Status } from '../shared/protocol';
 import { protectLiteralMarkers } from '../shared/formatting';
 import { appendTranslation, candidates, excluded, OWN, snapshot } from './extractor';
 import { TranslationMascot } from './mascot';
@@ -11,7 +11,7 @@ export class PageTranslator {
   private records = new Map<Element, RecordState>();
   private ids = new Map<string, RecordState>();
   private jobs = new Map<string, Batch>();
-  private earlyEvents = new Map<string, HostEvent[]>();
+  private earlyEvents = new Map<string, SessionEvent[]>();
   private memory = new Map<string, string>();
   private settings: Settings = DEFAULT_SETTINGS;
   private status?: Status;
@@ -23,6 +23,7 @@ export class PageTranslator {
   private observer?: IntersectionObserver;
   private mutations?: MutationObserver;
   private routeTimer?: ReturnType<typeof setInterval>;
+  private connectionTimer?: ReturnType<typeof setInterval>;
   private mutationTimer?: ReturnType<typeof setTimeout>;
   private dirty = new Set<Element>();
   private href = location.href;
@@ -56,6 +57,7 @@ export class PageTranslator {
   }
   private async start(): Promise<void> {
     this.stop(false); this.enabled = true; this.paused = false; this.error = ''; this.href = location.href;
+    this.monitorConnection();
     this.ensureMascot();
     this.observer = new IntersectionObserver(entries => {
       for (const e of entries) { const r = this.records.get(e.target); if (r) r.near = e.isIntersecting; }
@@ -93,7 +95,7 @@ export class PageTranslator {
   }
   stop(removeMascot = false): void {
     this.generation++; this.enabled = false; this.paused = false;
-    this.observer?.disconnect(); this.mutations?.disconnect(); clearInterval(this.routeTimer); clearTimeout(this.mutationTimer);
+    this.observer?.disconnect(); this.mutations?.disconnect(); clearInterval(this.routeTimer); clearInterval(this.connectionTimer); this.connectionTimer = undefined; clearTimeout(this.mutationTimer);
     document.defaultView?.removeEventListener('resize', this.refreshStyles);
     document.removeEventListener('load', this.refreshStyles, true);
     this.dirty.clear();
@@ -187,7 +189,7 @@ export class PageTranslator {
       }
     } finally { this.pending--; this.pump(); }
   }
-  handleEvent(e: HostEvent): void {
+  handleEvent(e: SessionEvent): void {
     if (!e.jobId || e.accountEpoch !== this.status?.accountEpoch) return;
     const batch = this.jobs.get(e.jobId);
     if (!batch) {
@@ -229,6 +231,7 @@ export class PageTranslator {
     this.render();
   }
   stateChanged(status?: Status, disconnected = false): void {
+    if (status?.transportId && this.status?.transportId && status.transportId !== this.status.transportId) disconnected = true;
     if (status && this.status && (status.accountEpoch !== this.status.accountEpoch || status.activeKey !== this.status.activeKey)) {
       this.stop(false); this.memory.clear(); this.error = '账号已变化，点击扩展中的翻译按钮重新开始。';
     }
@@ -239,12 +242,20 @@ export class PageTranslator {
     }
     if (disconnected) {
       if (!this.enabled && !this.selectionBusy) return;
-      this.paused = true; this.error = '助手连接中断，结果未知。重新连接后可重试未完成段落。';
+      this.paused = true; this.error = '翻译会话已断开，结果未知。重新登录后可重试未完成段落。';
       if (this.selectionBusy) this.failSelection(this.error);
       for (const r of this.records.values()) if (r.state === 'queued') r.state = 'failed';
       this.jobs.clear();
     }
     this.render();
+  }
+  private monitorConnection(): void {
+    if (this.connectionTimer) return;
+    this.connectionTimer = setInterval(() => {
+      if (!this.enabled && !this.selectionBusy) { clearInterval(this.connectionTimer); this.connectionTimer = undefined; return; }
+      void this.rpc('page.hello').then(hello => this.stateChanged(hello.status, hello.connection === 'disconnected'))
+        .catch(() => this.stateChanged(undefined, true));
+    }, 15_000);
   }
   settingsChanged(settings: Settings): void {
     const changed = JSON.stringify([this.settings.targetLanguage, this.settings.sourceLanguage, this.settings.models, this.settings.glossary, this.settings.excludedSelectors]) !==
@@ -268,7 +279,7 @@ export class PageTranslator {
     // Reject ranges crossing excluded forms or code blocks, even when their endpoints are outside them.
     const fragment = range.cloneContents();
     if (fragment.querySelector(`input,textarea,form,[contenteditable],pre,script,style,[${OWN}]`)) throw new AppError('excluded_selection', '选区包含输入区、代码块或译文，请只选择原文正文。');
-    this.ensureMascot(); this.selectionBusy = true; this.selectionError = ''; this.selectionResult = false;
+    this.ensureMascot(); this.selectionBusy = true; this.monitorConnection(); this.selectionError = ''; this.selectionResult = false;
     const id = `selection-${++this.sequence}`; this.activeSelectionId = id;
     this.retrySelection = this.lastSelection = { text, range: range.cloneRange() };
     this.mascot!.beginSelection(id, range); this.render();
@@ -277,7 +288,7 @@ export class PageTranslator {
       const hello = await this.rpc('page.hello');
       if (generation !== this.generation || id !== this.activeSelectionId) return;
       this.documentId = hello.documentId;
-    } catch (e) { if (id === this.activeSelectionId) this.failSelection(e instanceof Error ? e.message : '助手连接失败。'); return; }
+    } catch (e) { if (id === this.activeSelectionId) this.failSelection(e instanceof Error ? e.message : '翻译会话连接失败。'); return; }
     await this.submit({ records: [], generation: this.generation, selection: { id, ...source } });
   }
   private ensureMascot(): void {
@@ -361,7 +372,7 @@ if (chrome.runtime.id && !global.__translateMyPage) {
     if (m.type === 'page.control') { app.control(m.action, m.status, m.settings).then(() => reply({ ok: true })).catch(e => reply({ error: { code: e.code || 'page_error', message: e.message } })); return true; }
     if (m.type === 'translation.event') app.handleEvent(m.event);
     if (m.type === 'state.changed') app.stateChanged(m.status);
-    if (m.type === 'host.disconnected') app.stateChanged(undefined, true);
+    if (m.type === 'session.disconnected') app.stateChanged(undefined, true);
     if (m.type === 'settings.changed') app.settingsChanged(m.settings);
     return false;
   });

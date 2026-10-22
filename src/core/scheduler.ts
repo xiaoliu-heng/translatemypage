@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { AppError, assert, PROMPT_VERSION, publicError, TranslationParams, validateTranslationParams } from '../shared/protocol';
 import { AuthManager } from './auth';
 import { ChatGPTPlanProvider } from './provider';
@@ -11,30 +10,40 @@ export class Scheduler {
   private keys = new Map<string, string>();
   private groups = new Map<string, Group>();
   private running = false; private lastPage = ''; private paused = false;
+  private cancellation = 0;
+  private cancelledPages = new Map<string, number>();
   constructor(private auth: Pick<AuthManager, 'active' | 'epoch' | 'mark'>, private provider: Pick<ChatGPTPlanProvider, 'translate'>,
     private cache: TranslationCache, private emit: Emit) {}
   get busy(): boolean { return this.running || this.groups.size > 0; }
-  submit(p: TranslationParams): { jobId: string } {
+  async submit(p: TranslationParams): Promise<{ jobId: string }> {
     validateTranslationParams(p);
     const a = this.auth.active();
     assert(a && a.key === p.accountKey && p.accountEpoch === this.auth.epoch, 'stale_account', '账号已变化，请重新开始翻译。');
     assert(a.identity === 'signed_in' && a.plan !== 'not_granted', 'not_granted', '请先登录并授权使用套餐。');
+    const cancellation = this.cancellation, pageVersion = this.cancelledPages.get(p.document.pageKey);
     this.prune();
-    const idempotency = digest([p.accountEpoch, p.document, p.requestKey]);
+    const idempotency = await digest([p.accountEpoch, p.document, p.requestKey]);
+    assert(p.accountEpoch === this.auth.epoch, 'stale_account', '账号已变化。');
     const previous = this.keys.get(idempotency);
     if (previous && this.jobs.has(previous)) return { jobId: previous };
     assert(this.jobs.size < 1000 && this.groups.size < 100, 'queue_full', '翻译队列已满，请稍后继续。');
-    const key = digest([p.accountKey, p.model, p.sourceLanguage, p.targetLanguage, p.title, p.glossaryVersion, p.glossary,
+    const key = await digest([p.accountKey, p.model, p.sourceLanguage, p.targetLanguage, p.title, p.glossaryVersion, p.glossary,
       p.segments.map(s => [s.text, s.protected])]);
+    assert(p.accountEpoch === this.auth.epoch, 'stale_account', '账号已变化。');
+    const raced = this.keys.get(idempotency);
+    if (raced && this.jobs.has(raced)) return { jobId: raced };
+    assert(cancellation === this.cancellation && pageVersion === this.cancelledPages.get(p.document.pageKey), 'cancelled', '任务已取消。');
+    assert(this.jobs.size < 1000 && this.groups.size < 100, 'queue_full', '翻译队列已满，请稍后继续。');
     let group = this.groups.get(key);
     if (!group) { group = { key, jobs: [], params: p, controller: new AbortController(), running: false }; this.groups.set(key, group); }
-    const job: Job = { id: randomUUID(), params: p, state: 'queued', group, created: Date.now() };
+    const job: Job = { id: crypto.randomUUID(), params: p, state: 'queued', group, created: Date.now() };
     group.jobs.push(job); this.jobs.set(job.id, job); this.keys.set(idempotency, job.id);
     // RPC accepted must be written before the first event, including cache hits.
-    setImmediate(() => { this.send(job, 'queued'); void this.pump(); });
+    setTimeout(() => { if (job.state === 'queued') this.send(job, 'queued'); void this.pump(); });
     return { jobId: job.id };
   }
   cancel(jobId?: string, pageKey?: string): void {
+    if (pageKey) this.cancelledPages.set(pageKey, (this.cancelledPages.get(pageKey) || 0) + 1);
     for (const job of this.jobs.values()) {
       if ((!jobId || job.id === jobId) && (!pageKey || job.params.document.pageKey === pageKey) && ['queued', 'started'].includes(job.state)) {
         job.state = 'cancelled'; this.send(job, 'cancelled');
@@ -43,10 +52,10 @@ export class Scheduler {
       }
     }
   }
-  cancelAll(): void { this.cancel(); this.paused = false; }
+  cancelAll(): void { this.cancellation++; this.cancel(); this.paused = false; }
   resume(): void { this.paused = false; void this.pump(); }
   private send(job: Job, event: string, data?: any): void { this.emit(event, data, job.id, job.params.accountEpoch); }
-  private cacheKey(p: TranslationParams, index: number): string {
+  private cacheKey(p: TranslationParams, index: number): Promise<string> {
     const s = p.segments[index];
     return digest([p.accountKey, s.text, s.protected, p.sourceLanguage, p.targetLanguage, p.model, PROMPT_VERSION, p.glossaryVersion, p.glossary, p.title]);
   }
@@ -61,7 +70,9 @@ export class Scheduler {
     try {
       for (const j of group.jobs) { j.state = 'started'; this.send(j, 'started'); }
       const output = new Map<string, string>();
-      const missing = p.segments.filter((s, i) => { const cached = this.cache.get(this.cacheKey(p, i)); if (cached !== undefined) output.set(s.id, cached); return cached === undefined; });
+      const cacheKeys = await Promise.all(p.segments.map((_, i) => this.cacheKey(p, i)));
+      group.controller.signal.throwIfAborted();
+      const missing = p.segments.filter((s, i) => { const cached = this.cache.get(cacheKeys[i]); if (cached !== undefined) output.set(s.id, cached); return cached === undefined; });
       if (missing.length) {
         const translated = await this.provider.translate({ ...p, segments: missing }, group.controller.signal, () => {
           if (Date.now() - lastProgress > 800) { lastProgress = Date.now(); for (const j of group.jobs) this.send(j, 'progress'); }
@@ -70,8 +81,9 @@ export class Scheduler {
         assert(p.accountEpoch === this.auth.epoch, 'stale_account', '账号已切换。');
         for (const [id, value] of translated) output.set(id, value);
         // Validate the entire batch before committing any result to the persistent cache.
-        for (let i = 0; i < p.segments.length; i++) this.cache.set(this.cacheKey(p, i), output.get(p.segments[i].id)!);
-        await this.cache.flush();
+        for (let i = 0; i < p.segments.length; i++) this.cache.set(cacheKeys[i], output.get(p.segments[i].id)!);
+        // A full/unavailable local cache must not turn a completed paid request into a retry.
+        await this.cache.flush().catch(() => {});
         await this.auth.mark(p.accountKey, 'last_request_succeeded');
       }
       group.controller.signal.throwIfAborted();
@@ -96,7 +108,7 @@ export class Scheduler {
     } finally {
       if (this.groups.get(group.key) === group) this.groups.delete(group.key);
       this.running = false;
-      setImmediate(() => void this.pump());
+      setTimeout(() => void this.pump());
     }
   }
   private prune(): void {

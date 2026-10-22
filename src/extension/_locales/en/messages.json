@@ -3,6 +3,6 @@
     "message": "TranslateMyPage: AI Bilingual Translation"
   },
   "extensionDescription": {
-    "message": "AI webpage and selected-text translation with formatting. Uses your authorized ChatGPT plan quota. Requires a macOS/Linux helper."
+    "message": "AI bilingual webpage and selected-text translation. Keeps formatting and can use your ChatGPT plan. No helper required."
   }
 }

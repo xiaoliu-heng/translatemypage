@@ -1,40 +1,22 @@
-TranslateMyPage 0.1.0 — reviewer instructions
+TranslateMyPage 0.2.0 — review instructions (draft; not submitted)
 
-Single purpose: translate a user-activated webpage or selected text using the user's explicitly authorized ChatGPT plan, while retaining the original for bilingual reading.
+Single purpose: AI webpage bilingual and selected-text translation.
+Free, MIT-licensed source: https://github.com/xiaoliu-heng/translatemypage
 
-Dependencies and platform support
-This extension requires a separately installed, open-source Native Messaging host named com.translatemypage.host. The initial helper supports macOS and Linux with Secret Service; Windows and ChromeOS are not supported. This requirement is prominently disclosed in the listing and extension connection help.
+Install only the extension. There is no Native Messaging host, local HTTP listener, OS keychain bridge or Node.js runtime dependency.
 
-The helper ZIP contains bundled host.cjs, its installer, source for the macOS keychain bridge, a README and third-party notices. It contains no user credentials. Installation uses a stable absolute path for Node.js 22.16+. macOS requires Xcode Command Line Tools to compile the bridge; Linux requires secret-tool and a working desktop Secret Service.
+1. Click the extension toolbar button, then Continue with ChatGPT to open its visible Translation Session tab.
+2. Click Continue with ChatGPT in that tab; sign in and consent on OpenAI's official page using an eligible personal account. No shared developer credentials are provided.
+3. Authorization returns to http://127.0.0.1:1455/auth/callback. With no local listener, a browser connection error is expected. Copy the complete URL from the address bar into the session tab's masked callback field. Submit within five minutes. Do not put the callback URL or any token in a review transcript.
+4. The extension validates state, one-time consumption, exact redirect, issued client binding, PKCE and the signed ID-token claims. Plan availability uses token-response scopes rather than login success alone.
+5. Confirm the plan usage notice, select an available model, keep the session tab open, and return to a normal HTTPS article. Open the toolbar popup and start translation; confirm content sharing on first use.
+6. Verify bilingual text, original typography and links, selected-text loading and dialogue, draggable pet, stop/restore and explicit retry.
+7. Close the session tab: requests stop and local credentials are discarded. Restart the session and verify fresh authorization. Sign out explicitly to attempt remote revocation. A failed revocation is disclosed with a link to ChatGPT settings.
+8. Test simultaneous session pages, cancelled authorization, wrong/stale callbacks, account switching, quota limits and worker disconnection. Unknown inference results must not be automatically replayed.
 
-Install the helper after extracting its ZIP:
-  node scripts/install-host.mjs --extension-id=THE_32_CHARACTER_ID_OF_THIS_STORE_ITEM
+Only activeTab, scripting and storage are requested, with host access limited to auth.openai.com and api.openai.com. No browser-history API, broad website permission, remote executable code or developer inference proxy is used. Tokens are held only in the visible extension session page's memory. Nonsecret registration identifiers and preferences use chrome.storage.local; account-isolated translation cache uses IndexedDB.
 
-Use the exact extension ID assigned to this store item. The installer writes that ID both to the Native Messaging registration's allowed_origins and to the host's origin-check configuration. Review the plan without changing files:
-  node scripts/install-host.mjs --dry-run --extension-id=THE_32_CHARACTER_ID_OF_THIS_STORE_ITEM
+The documented OpenAI flow describes a loopback listener. This project instead accepts the callback manually. Offline checks do not establish end-to-end provider compatibility. Actual installed-extension OAuth, token exchange and translation verification remains pending; do not submit this draft until that verification and current screenshots are complete.
 
-Testing
-1. Open the extension and select Continue with ChatGPT. Complete the official browser sign-in and explicit ChatGPT plan-usage consent with an eligible reviewer-owned account. There are no shared review credentials or bypass accounts.
-2. Confirm the plan-usage notice. The app lists the models actually available to the authorized account; pick a model and target language.
-3. Open a normal HTTP/HTTPS article. Click Translate current page and consent to sending the selected reading content, title and matching glossary entries to OpenAI.
-4. Verify original paragraphs remain in place, translations preserve their typography/inline formatting, and links still work. Stop translation to restore the original.
-5. On the activated page, select a short body-text sentence. The companion approaches the selection with a pulsing light and opens a game-style result dialog only after receiving a complete validated result. Alt+T is also supported.
-6. Drag the companion, close the dialog, press Escape, restore the page, reload settings, and check that no stale result reopens a dismissed dialog. Reduced motion is respected.
-7. On an unavailable native host, show the installation guidance. On a failed inference, display an explicit retry; do not silently resubmit an unknown completed request.
-
-Data and code
-Only the user-authorized local host talks to OpenAI for sign-in, model catalog and Responses SSE. Translation requests use store:false and stream:true. The extension has no analytics endpoint, custom inference proxy or advertising integration. OAuth secrets are held by macOS Keychain / Linux Secret Service, not Chrome extension storage.
-
-All extension executable code is shipped in the ZIP. Model outputs are validated data and rendered using safe local nodes; neither remote scripts nor model-generated HTML are executed. The helper is a separately installed native dependency with public source.
-
-Known scope
-Regular main-document HTTP/HTTPS reading content is supported. Incognito, complex shadow-root selection, cross-origin iframes, PDF, EPUB, subtitles and OCR are outside this initial release. The interface is primarily Simplified Chinese.
-
-Publisher: xiaoliu-heng
-Support and privacy contact: xiaoliublog@gmail.com
-
-Public source, helper download and privacy URLs must be supplied in the corresponding dashboard fields before submission. The release status file records which URLs and the assigned store item ID are still pending.
-
-Public source: https://github.com/xiaoliu-heng/translatemypage/tree/main
-Helper and versioned source downloads: https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.0
-Privacy policy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md
+Support: xiaoliublog@gmail.com
+Privacy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md

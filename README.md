@@ -2,133 +2,95 @@
 
 **AI 网页翻译 · 沉浸式双语阅读。**
 
-TranslateMyPage 翻译网页和选中文字，保留原文对照与网页排版。翻译请求可使用自己已授权的 **ChatGPT 订阅额度**，无需另填 OpenAI API 密钥。
+翻译网页和选中文字，保留原文对照、字体、链接和段落格式。可使用自己已授权的 **ChatGPT 订阅额度**，无需另填 OpenAI API 密钥。免费开源，采用 [MIT 许可证](LICENSE)。维护者：xiaoliu-heng；支持邮箱：xiaoliublog@gmail.com。
 
-免费开源，采用 [MIT 许可证](LICENSE)。维护者：xiaoliu-heng；支持邮箱：xiaoliublog@gmail.com。
+> 当前源码为 **0.2.0 免助手开发版**，尚未上架 Chrome / Edge 商店。手动回调登录已实现并通过离线测试，仍需在已安装扩展中完成真实授权、令牌兑换和翻译验证。已有 v0.1.x Releases 属于旧架构，需要助手；不要混用旧安装包。
 
-> Edge 商店版本正在准备，Chrome 商店版本尚未提交审核。完整源码位于当前仓库；[Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 提供已发布版本的源码与配套助手。扩展需要另外安装本地助手；支持 macOS 和具备 Secret Service 的 Linux，Windows / ChromeOS / 移动端暂不支持。构建或发布下载包不表示已经上架商店。
+## 功能
 
-## 主要功能
-
-- **AI 双语翻译**：原文与译文在同一网页对照，支持标题、段落、列表与表格，可恢复原文。
-- **保留排版**：沿用原文的字体、字号、颜色、行距、对齐与缩进，并保留链接、加粗、斜体、行内代码、上下标和手动换行。
-- **划词即译**：在已激活的页面选择正文，小球跑到选区旁等待，结果返回后展开游戏风格对话框。支持 Alt+T、Escape、关闭和手动重试。
-- **可拖动小球**：闭眼表示关闭，呼吸灯表示处理中，灯泡常亮表示就绪。位置可保存，唤醒、入睡、移动和对话框均有过渡，尊重系统减少动态效果设置。
-- **订阅额度共用**：官方 Sign in with ChatGPT 登录与授权，读取当前账号实际可用的模型。请求会使用该账号授权的套餐额度；可用模型、资格及限制以 OpenAI 和工作区设置为准。
-- **本地助手与缓存**：凭据放在系统钥匙串 / Secret Service；翻译直接请求 OpenAI，译文按账号缓存在本机，无开发者中转服务、广告或分析 SDK。
+- **沉浸式双语**：原文与译文在同一页对照，支持标题、段落、列表与表格，可恢复原文。
+- **沿用原文格式**：保留字体、字号、颜色、行距、对齐、缩进、链接、强调、行内代码、上下标和手动换行。
+- **划词翻译与浮球**：选中文字，小球移动到选区旁等待，然后展开游戏风格对话框。睡觉、呼吸灯和灯泡常亮分别表示关闭、处理中和就绪。支持拖动、位置记忆、Alt+T、Escape、手动重试和减少动态效果。
+- **账号实际可用的模型**：通过 OpenAI 官方页面授权使用套餐，读取当前账号的模型目录；资格、模型和额度由 OpenAI 及工作区设置决定。
+- **仅安装扩展**：登录、刷新、翻译队列和流式请求都在扩展内完成。没有本地助手、Node.js 运行依赖或开发者翻译中转服务器。
+- **本地译文缓存**：按账号隔离，最多 2,000 条，可随时清空。没有广告和分析 SDK。
 
 ## 安装开发版
 
-通过 HTTPS 克隆仓库：
+构建源码需要 Node.js 22.16+；使用已经构建的扩展不需要 Node.js。
 
 ```sh
 git clone https://github.com/xiaoliu-heng/translatemypage.git
 cd translatemypage
-```
-
-也可以从 [Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 下载对应版本明确命名的 `TranslateMyPage-版本-source.zip` 并解压。在源码目录运行以下命令。
-
-需要 Node.js 22.16+。macOS 还需 Xcode Command Line Tools；Linux 还需 `secret-tool`、桌面 Secret Service 和 `xdg-open`。
-
-```sh
 npm ci
 npm run build
-npm run install:host
 ```
 
-1. 在 Chrome 或 Edge 的扩展管理页启用开发者模式，加载 `dist/extension`。
-2. 打开扩展，点击 **Continue with ChatGPT**，在官方网页登录并授权使用套餐额度。
-3. 确认套餐用量说明，选择可用模型和目标语言。
-4. 在普通网页点击翻译，确认内容发送说明后开始双语阅读。当前页激活后可直接划词翻译。
+1. 在桌面 Chrome / Edge 的扩展管理页启用开发者模式，加载 `dist/extension`。
+2. 点击工具栏扩展按钮，点击 **Continue with ChatGPT**，打开翻译会话标签页。
+3. 在会话页再次点击 **Continue with ChatGPT**，在新打开的 OpenAI 官方页面登录并授权。
+4. 授权完成后，地址会跳转到 `http://127.0.0.1:1455/auth/callback?…`。因为没有本地监听服务，浏览器显示无法连接是预期现象。复制地址栏的**完整回调链接**，回到翻译会话页，粘贴并点击“验证并完成登录”。链接含一次性授权码，只粘贴到扩展，不要发送到聊天或提交给开发者。
+5. 选择可用模型与目标语言，确认套餐说明。保留会话标签页，切回普通网页，从工具栏扩展按钮开启翻译；首次会说明发送给 OpenAI 的内容。
 
-Edge 使用 `npm run install:host -- --browser=edge`。Chrome 和 Edge 各自保留独立的助手运行配置；安装一个不会覆盖另一个的扩展 ID。安装目标还支持 `chromium`、`testing`。助手安装器会记录当前 Node 的绝对路径，移动或删除 Node 版本后请重新安装。
+登录请求与令牌兑换使用完全相同的回调地址。每次登录都有独立 state、nonce 和 PKCE verifier；回调只消费一次，5 分钟后失效。只接受本次 `127.0.0.1:1455/auth/callback` 地址，拒绝其他端口、路径、账号注册和重复参数。
 
-## 安装商店版的配套助手
+### 为什么要保留会话标签页
 
-从 [Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 下载与浏览器、扩展版本对应的 helper ZIP。Edge 选择 `edge-helper.zip`，解压后在该目录运行：
+访问令牌、刷新令牌、身份令牌和待处理的 PKCE 信息**只存在扩展会话页的内存里**，不写入 `chrome.storage`、localStorage、sessionStorage 或 IndexedDB。会话页直接请求 OpenAI；后台 service worker 负责网页消息路由。
 
-```sh
-node scripts/install-host.mjs --browser=edge --extension-id=Edge商店条目的32位扩展ID
-```
+请保持会话标签页打开，可以切换到其他标签页。关闭、刷新该页、重启浏览器或更新扩展会结束本次登录，需要重新授权。扩展会防止自动丢弃该标签页；不会使用隐藏网页或本地守护进程保活。后台连接中断时取消任务，不自动重放结果未知的模型请求。
 
-Chrome 助手的命令为：
+“退出”会尝试撤销最新的刷新令牌，然后清除内存凭据。直接关闭标签页会丢弃本地凭据，但不能保证撤销远端授权；可在 [ChatGPT 设置](https://chatgpt.com/settings/usage) 中管理应用权限。
 
-```sh
-node scripts/install-host.mjs --extension-id=商店条目的32位扩展ID
-```
+### 与官方流程的关系
 
-扩展 ID 可从商店网址末尾或扩展详情页复制。Edge 与 Chrome 的商店 ID 可能不同。安装器会把同一 ID 写入对应浏览器 Native Messaging 的允许来源和 Host 自身的来源校验配置；不能把开发版 ID 直接用于商店版。
+OpenAI 的[注册与登录文档](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)指定 `http://127.0.0.1:<端口>/auth/callback`，并描述启动本地监听器。本项目保留该回调形式，由用户手动把返回地址交给扩展，不启动监听器。这是本项目的适配方案，不能视为 OpenAI 已明确支持的纯扩展接入方式；真实端到端兼容性仍待验证。
 
-检查安装计划而不写入文件：
-
-```sh
-node scripts/install-host.mjs --dry-run --browser=edge --extension-id=Edge商店条目的32位扩展ID
-```
-
-在扩展内退出账号后，可注销助手：
-
-```sh
-node scripts/install-host.mjs --browser=edge --uninstall
-```
-
-Chrome 使用 `--browser=chrome`，或省略该参数。注销只移除所选浏览器的注册，保留本地资料。完整数据清除方式见 [隐私政策](PRIVACY.md)。
+官方文档同时要求[令牌不要放入浏览器存储](https://developers.openai.com/siwc/token-sharing-open-source/profiles-and-sessions#credential-security)。本版不提供跨浏览器重启的持久登录，只保存非秘密的随机 Host 标识、已签发客户端 ID、账号绑定摘要、设置和译文缓存。授权页面不会授予读取 ChatGPT 历史对话的能力。
 
 ## 数据与权限
 
-第一次翻译前，会说明把待译正文、页面标题和命中的术语发送给 OpenAI，并征得同意。当前页地址只在本地用于站点术语、页面生命周期与临时权限检查，不作为完整地址加入模型提示。授权不会授予读取 ChatGPT 历史对话的能力。
+首次翻译前说明并征得同意：待译正文、选中文字、页面标题和命中的术语将直接发送给 OpenAI。完整网页地址只在本机用于站点规则和页面生命周期，不加入模型提示。表单、密码框、可编辑区、代码块默认排除；无痕窗口不支持。
 
-扩展只请求 `activeTab`、`scripting`、`storage` 和 `nativeMessaging`；不请求浏览历史或全站常驻权限，不支持无痕窗口。表单、密码框、可编辑输入区与代码块默认排除。
+- `activeTab`、`scripting`：在用户激活的当前普通网页注入打包代码。
+- `storage`：本机偏好、小球位置和非秘密注册信息；译文缓存使用扩展自己的 IndexedDB。
+- 网络权限仅限 `https://auth.openai.com/*` 和 `https://api.openai.com/*`，用于授权、签名校验、刷新、退出、模型目录与翻译。
 
-[隐私政策](PRIVACY.md) · [供商店托管的 HTML 隐私政策](store/privacy-policy.html)
+无需 `nativeMessaging`、`identity`、浏览历史或全站常驻访问权限。扩展没有 `web_accessible_resources`，网页不能读取会话页或凭据。
 
-## 本地 Host
+[隐私政策](PRIVACY.md) · [HTML 隐私政策](store/privacy-policy.html)
 
-本地助手（Host）负责 ChatGPT 官方登录、系统凭据保管和翻译请求；扩展负责读取用户激活的网页并显示译文。它是浏览器按需启动的独立 Node.js 进程，没有单独桌面窗口。AI 模型在 OpenAI 运行，助手不在本机运行大模型。连接、账号、模型与重试入口在扩展界面。
+## 从 0.1.x 升级
 
-```text
-网页小球 / 划词
-  → 扩展后台 background.ts
-  → NativeBridge / chrome.runtime.connectNative
-  → launch-host → src/host/index.ts
-  → AuthManager / Scheduler / ChatGPTPlanProvider
-  → 操作系统凭据库、本机缓存、OpenAI Responses SSE
-```
+新版本不再调用旧助手，也不导入旧凭据。更新扩展后重新登录即可。旧助手的 Native Messaging 注册和 `TranslateMyPage/runtime/` 目录可移除；个人资料目录、旧译文与系统钥匙串 / Secret Service 凭据需另行清理，不会因更新扩展自动删除。建议在升级前退出旧版账号，并在 ChatGPT 设置中断开不再使用的旧授权。
 
-构建产物是 `dist/host/host.cjs`。macOS 运行目录为 `~/Library/Application Support/TranslateMyPage/runtime/<browser>/`；Linux 为用户数据目录下的 `TranslateMyPage/runtime/<browser>/`，其中 `<browser>` 为 `chrome` 或 `edge` 等安装目标。账号与缓存分别由 `src/host/storage.ts` 中的 `dataRoot()` 管理。浏览器第一次连接时拉起 Host，扩展空闲 60 秒且无任务/登录时断开；Host 在输入流关闭后退出，无需额外启动 HTTP 服务。
-
-## 开发与发布
+## 开发与打包
 
 ```sh
 npm run check          # 类型检查、离线测试、构建
-npm run package:store  # Chrome ZIP、助手 ZIP、源码 ZIP、上架材料与校验和
-npm run package:edge   # Edge 专用 ZIP、助手、源码、上架材料与校验和
-# 获得商店 ID 后可重打助手包：
-node scripts/package-store.mjs --browser=edge --extension-id=Edge商店条目的32位扩展ID
+npm run package:store  # Chrome 扩展、源码、上架材料及校验和
+npm run package:edge   # Edge 扩展、源码、上架材料及校验和
 ```
 
-`release/0.1.1/` 为当前 Chrome 发布目录，`release/0.1.1/edge/` 为 Edge 发布目录。`release-status.json` 明确标注是否仍待提交；构建成功不表示已通过商店审核。安装包采用允许列表，不包含本地账号、凭据、缓存、录制日志或浏览器资料。商店包不包含开发公钥、update_url 与 source map。v0.1.0 已公开的归档保持不变。
-
-`extension-public-key.json` 只含开发公钥，用于固定开发版 ID。商店 ID 由商店分配，配套助手以实际 ID 注册。
+输出位于 `release/0.2.0/` 和 `release/0.2.0/edge/`。不再生成 helper ZIP。发布包使用明确的文件允许列表，不包含个人账号、凭据、缓存、录制资料或浏览器配置。商店扩展包移除开发公钥和 source map，包含 MIT 及第三方许可证。`extension-public-key.json` 仅为固定开发版 ID 的公钥，不含私钥。
 
 ```text
-src/extension/          网页提取、排版、小球、后台与扩展界面
-src/host/index.ts        Host 入口、Native Messaging 分帧和 RPC
-src/host/auth.ts         官方授权、会话与多账号
-src/host/provider.ts     模型目录、Responses SSE 与结果校验
-src/host/scheduler.ts    队列、缓存、请求合并和取消
-src/host/storage.ts      本机存储、进程锁与系统凭据库
-native/keychain.swift   macOS 钥匙串桥接
-store/                  商店文案、图片、隐私披露、审核和安装说明
-docs/                   可托管的项目与隐私页面
+src/extension/          网页提取、格式还原、小球、后台、会话页与设置
+src/core/auth.ts        手动回调、PKCE、签名校验、内存会话与刷新
+src/core/provider.ts    模型目录、Responses SSE、格式校验
+src/core/scheduler.ts   队列、合并、取消与账号隔离缓存
+src/core/storage.ts     注册信息与缓存接口（不接收令牌）
+src/shared/            协议与格式标记
+store/                  商店介绍、隐私披露与审核步骤
 tests/                  离线自动测试
 ```
 
+提交商店前还需在实际扩展中验证登录、一次真实翻译、关闭会话、重新授权及 Chrome / Edge 行为。构建或打包成功不表示上架成功。旧版公开归档保持不变。
+
 ## 当前范围
 
-普通 HTTP/HTTPS 主文档。复杂 Shadow DOM、跨域 iframe、PDF、EPUB、字幕、OCR 属于后续适配范围。界面主要为简体中文。AI 翻译可能有误，请结合原文判断。
+桌面 Chromium 120+ 的普通 HTTP/HTTPS 主文档；不同操作系统的实机验证待完成。复杂 Shadow DOM、跨域 iframe、PDF、EPUB、字幕和 OCR 待后续适配。界面主要为简体中文，AI 翻译可能有误，请结合原文判断。
 
 TranslateMyPage 独立开发，与 OpenAI、ChatGPT 或 Immersive Translate 无隶属关系。
 
-## 官方接口依据
-
-[ChatGPT 套餐接入](https://developers.openai.com/siwc/token-sharing-open-source) · [授权](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) · [模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference) · [预览约束](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations) · [Chrome Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
+[官方套餐接入](https://developers.openai.com/siwc/token-sharing-open-source) · [模型与推理](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)

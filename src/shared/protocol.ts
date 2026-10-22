@@ -1,7 +1,6 @@
 import { validSourceFormat } from './formatting';
-export const HOST_NAME = 'com.translatemypage.host';
 export const PROTOCOL = 1;
-export const VERSION = '0.1.1';
+export const VERSION = '0.2.0';
 export const MAX_FRAME = 128 * 1024;
 export const MAX_BATCH_CHARS = 12_000;
 export const MAX_SEGMENTS = 8;
@@ -16,7 +15,9 @@ export interface Account {
 }
 export interface Status {
   accounts: Account[]; activeKey?: string; accountEpoch: number;
-  authorizing: boolean; notice?: string;
+  transportId?: string;
+  authorizing: boolean; signingOut?: boolean;
+  authorization?: { redirectUri: string; expiresAt: number; exchanging: boolean }; notice?: string;
 }
 export interface Model { slug: string; displayName: string }
 export interface GlossaryTerm { source: string; target: string; hostname?: string }
@@ -44,7 +45,7 @@ export interface Translation extends Segment { translation: string }
 export interface RpcRequest { v: 1; id: string; method: string; params?: any }
 export interface RpcError { code: string; message: string; status?: number; requestId?: string }
 export interface RpcResponse { v: 1; id: string; result?: any; error?: RpcError }
-export interface HostEvent {
+export interface SessionEvent {
   v: 1; event: string; bootId: string; seq: number;
   jobId?: string; accountEpoch?: number; data?: any;
 }
@@ -56,7 +57,7 @@ export function publicError(error: unknown): RpcError {
   if (error instanceof AppError) return error.toJSON();
   if (error instanceof Error && error.name === 'AbortError') return { code: 'cancelled', message: '任务已取消。' };
   // Never forward raw HTTP/library exceptions: they may contain a credential-bearing URL.
-  return { code: 'internal_error', message: '操作失败，请稍后重试或重新连接本地助手。' };
+  return { code: 'internal_error', message: '操作失败，请稍后重试或重新打开翻译会话。' };
 }
 export function assert(condition: unknown, code: string, message: string): asserts condition {
   if (!condition) throw new AppError(code, message);

@@ -67,10 +67,10 @@ export class ChatGPTPlanProvider {
   constructor(private auth: Pick<AuthManager, 'access'>, private request: typeof fetch = fetch) {}
   async models(key: string): Promise<Model[]> {
     const credentials = await this.auth.access(key);
-    const r = await this.request(`${RESOURCE}/models`, { headers: { Authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(20_000) });
+    const r = await this.request(`${RESOURCE}/models`, { credentials: 'omit', redirect: 'error', headers: { Authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(20_000) });
     const data = await r.json() as any;
     if (!r.ok) throw apiError(data, r.status, r.headers.get('x-request-id') || undefined);
-    assert(Array.isArray(data.models), 'incompatible_catalog', '模型目录格式与当前助手不兼容。');
+    assert(Array.isArray(data.models), 'incompatible_catalog', '模型目录格式与当前扩展不兼容。');
     return data.models.filter((m: any) => m.visibility === 'list' && typeof m.slug === 'string' && typeof m.display_name === 'string')
       .map((m: any) => ({ slug: m.slug, displayName: m.display_name }));
   }
@@ -90,7 +90,7 @@ export class ChatGPTPlanProvider {
     let response: Response | undefined;
     // Only retry explicit pre-stream temporary rejection. An interrupted request has an unknown result.
     for (let attempt = 0; attempt < 3; attempt++) {
-      response = await this.request(`${RESOURCE}/responses`, { method: 'POST', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' },
+      response = await this.request(`${RESOURCE}/responses`, { method: 'POST', credentials: 'omit', redirect: 'error', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: p.model, instructions, input: [{ role: 'user', content: JSON.stringify(content) }], store: false, stream: true }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) });
       if (response.ok) break;

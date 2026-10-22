@@ -2,13 +2,21 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TranslateMyPage</title><link rel="stylesheet" href="ui.css"></head>
 <body data-mode="popup">
   <main class="app">
-    <header><div class="brand"><span class="mark">译</span><div><h1>TranslateMyPage</h1><p>把世界读成自己的语言</p></div></div><button id="openOptions" class="icon" title="打开设置" aria-label="打开设置">⚙</button></header>
+    <header><div class="brand"><span class="mark">译</span><div><h1>TranslateMyPage</h1><p>AI 翻译 · 沉浸式双语阅读</p></div></div><button id="openOptions" class="icon" title="打开设置" aria-label="打开设置">⚙</button></header>
     <section class="card account-card">
-      <div class="eyebrow"><span id="connectionDot" class="dot"></span><span id="connection">正在连接助手</span><button id="reconnect" class="text-button">重新连接</button></div>
-      <div id="installHelp" hidden><p>首次使用需安装 macOS / Linux 配套助手。<a href="https://github.com/xiaoliu-heng/translatemypage/releases" target="_blank" rel="noreferrer">下载和安装说明 ↗</a></p><p>在助手解压目录运行：</p><code id="installCommand" class="command">node scripts/install-host.mjs</code><p>需要 Node.js 22.16+；macOS 需 Xcode Command Line Tools，Linux 需 Secret Service。安装完成后点击重新连接。</p></div>
+      <div class="eyebrow"><span id="connectionDot" class="dot"></span><span id="connection">翻译会话未开启</span><button id="openSession" class="text-button">打开会话</button></div>
+      <p id="sessionHint" class="muted">只需安装扩展。登录后请保留翻译会话标签页；关闭或刷新它将结束本次登录。</p>
+      <section id="sessionIntro" hidden><h2>翻译会话</h2><p class="muted">在此完成登录，然后切回网页，从工具栏的扩展按钮开启翻译。此页保管本次登录，请保持打开。</p></section>
       <label for="accounts">ChatGPT 账号</label><select id="accounts"><option value="">尚未登录</option></select>
       <div class="status-line"><span id="identity">未登录</span><span id="plan">未授予套餐权限</span></div>
       <div class="row"><button id="signIn" class="secondary">Continue with ChatGPT</button><button id="addAccount" class="text-button" hidden>添加账号</button><button id="cancelAuth" class="text-button" hidden>取消登录</button><button id="logout" class="text-button" hidden>退出</button></div>
+      <section id="callbackStep" class="callback-step" hidden>
+        <h2>完成授权后，粘贴回调地址</h2>
+        <ol><li>在新打开的 OpenAI 官方页面登录并授权。</li><li>跳转到 <code>http://127.0.0.1:1455/auth/callback</code> 后，复制地址栏中的完整链接。没有本地服务时，页面会显示无法连接，这是预期现象。</li><li>回到本页粘贴，仅用于完成本次登录，有效期 5 分钟。</li></ol>
+        <label for="callbackUrl">本次回调地址</label><input id="callbackUrl" type="password" maxlength="12000" autocomplete="off" spellcheck="false" autocapitalize="none" placeholder="http://127.0.0.1:1455/auth/callback?…">
+        <button id="completeAuth" class="primary full">验证并完成登录</button>
+        <p class="muted">链接含一次性授权码。只粘贴到此处，请勿发送给别人或聊天机器人。</p>
+      </section>
       <p id="notice" class="notice" hidden></p>
     </section>
     <section class="card">

@@ -1,36 +1,40 @@
-import { AppError, assert, DEFAULT_SETTINGS, HostEvent, MAX_BATCH_CHARS, Model, publicError, Settings, TranslationParams } from '../shared/protocol';
-import { NativeBridge } from './bridge';
+import { AppError, assert, DEFAULT_SETTINGS, SessionEvent, MAX_BATCH_CHARS, Model, publicError, Settings, TranslationParams } from '../shared/protocol';
+import { SessionBridge } from './bridge';
+import { translationCache } from './storage';
 interface Page { tabId: number; frameId: number; documentId: string; pageKey: string; active: boolean }
 const pages = new Map<string, Page>();
 const jobs = new Map<string, Page>();
-const earlyEvents = new Map<string, HostEvent[]>();
+const earlyEvents = new Map<string, SessionEvent[]>();
+const transportId = crypto.randomUUID();
 let accepting = 0;
-let idle: ReturnType<typeof setTimeout> | undefined;
-let reconnecting = false;
-const bridge = new NativeBridge(onHostEvent, () => {
-  jobs.clear(); for (const p of pages.values()) void sendPage(p, { type: 'host.disconnected' });
-  // Reconnect the transport only. Never replay an inference whose terminal status was lost.
-  if ([...pages.values()].some(p => p.active) && !reconnecting) {
-    reconnecting = true;
-    void (async () => {
-      for (const delay of [500, 1500, 4000]) {
-        await new Promise(r => setTimeout(r, delay));
-        try { await bridge.connect(); broadcastStatus(); break; } catch {}
-      }
-      reconnecting = false;
-    })();
-  }
+const bridge = new SessionBridge(onSessionEvent, () => {
+  jobs.clear(); earlyEvents.clear();
+  for (const page of pages.values()) void sendPage(page, { type: 'session.disconnected' });
+  broadcastStatus();
 });
+chrome.runtime.onConnect.addListener(port => bridge.attach(port));
+function pageStatus() {
+  return bridge.status && { ...bridge.status, transportId, notice: undefined, authorization: undefined,
+    accounts: bridge.status.accounts.map(account => ({ ...account, name: '', email: '', subject: '', issuer: '', clientId: '' })) };
+}
+async function openSession(): Promise<void> {
+  const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB], documentUrls: [chrome.runtime.getURL('session.html')] });
+  const existing = contexts.find(context => context.tabId >= 0);
+  if (existing) {
+    await chrome.tabs.update(existing.tabId, { active: true });
+    if (existing.windowId >= 0) await chrome.windows.update(existing.windowId, { focused: true });
+  } else await chrome.tabs.create({ url: chrome.runtime.getURL('session.html') });
+}
 async function settings(): Promise<Settings> { const s = await chrome.storage.local.get('settings'); return { ...DEFAULT_SETTINGS, ...(s.settings as Partial<Settings> || {}) }; }
 async function sendPage(p: Page, message: unknown): Promise<void> {
   try { await chrome.tabs.sendMessage(p.tabId, message, { documentId: p.documentId }); } catch { pages.delete(p.pageKey); }
 }
 function broadcastStatus(): void {
   const message = { type: 'state.changed', connection: bridge.connection, status: bridge.status };
-  for (const p of pages.values()) void sendPage(p, message);
-  void chrome.runtime.sendMessage(message).catch(() => {}); scheduleIdle();
+  for (const p of pages.values()) void sendPage(p, { ...message, status: pageStatus() });
+  void chrome.runtime.sendMessage(message).catch(() => {});
 }
-function onHostEvent(e: HostEvent): void {
+function onSessionEvent(e: SessionEvent): void {
   if (e.event === 'status') { broadcastStatus(); return; }
   if (!e.jobId) return;
   const page = jobs.get(e.jobId);
@@ -38,12 +42,7 @@ function onHostEvent(e: HostEvent): void {
     earlyEvents.set(e.jobId, [...(earlyEvents.get(e.jobId) || []), e].slice(-24)); return;
   }
   if (page) void sendPage(page, { type: 'translation.event', event: e });
-  if (['jobCompleted', 'cancelled', 'failed'].includes(e.event)) { jobs.delete(e.jobId); scheduleIdle(); }
-}
-function scheduleIdle(): void {
-  clearTimeout(idle);
-  if (bridge.connection !== 'ready' || jobs.size || bridge.status?.authorizing || [...pages.values()].some(p => p.active)) return;
-  idle = setTimeout(() => { bridge.close(); broadcastStatus(); }, 60_000);
+  if (['jobCompleted', 'cancelled', 'failed'].includes(e.event)) { jobs.delete(e.jobId); }
 }
 function contentPage(sender: chrome.runtime.MessageSender): Page {
   assert(sender.tab?.id !== undefined && sender.documentId && sender.frameId === 0 && !sender.tab.incognito &&
@@ -54,23 +53,25 @@ function contentPage(sender: chrome.runtime.MessageSender): Page {
   return p;
 }
 function extensionUI(sender: chrome.runtime.MessageSender): boolean {
-  return !!sender.url && [chrome.runtime.getURL('popup.html'), chrome.runtime.getURL('options.html')].includes(sender.url.split(/[?#]/)[0]);
+  return !!sender.url && [chrome.runtime.getURL('popup.html'), chrome.runtime.getURL('options.html'), chrome.runtime.getURL('session.html')].includes(sender.url.split(/[?#]/)[0]);
 }
 async function actOnPage(action: string): Promise<any> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   assert(tab?.id !== undefined && !tab.incognito && /^https?:\/\//.test(tab.url || ''), 'unsupported_page', '请在普通 HTTP/HTTPS 网页上使用翻译。');
-  await bridge.connect();
+  if (!['stop', 'idle'].includes(action)) await bridge.connect();
   await chrome.scripting.insertCSS({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.css'] });
   await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.js'] });
-  return chrome.tabs.sendMessage(tab.id, { type: 'page.control', action, status: bridge.status, settings: await settings() }, { frameId: 0 });
+  return chrome.tabs.sendMessage(tab.id, { type: 'page.control', action, status: pageStatus(), settings: await settings() }, { frameId: 0 });
 }
 async function route(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
   assert(sender.id === chrome.runtime.id && message && typeof message.type === 'string', 'forbidden_sender', '消息来源无效。');
   if (sender.tab && !extensionUI(sender)) {
     const page = contentPage(sender);
     switch (message.type) {
-      case 'page.hello': return { pageKey: page.pageKey, documentId: page.documentId, status: bridge.status };
-      case 'page.activity': page.active = message.active === true; scheduleIdle(); return {};
+      case 'page.hello':
+        await bridge.connect().catch(() => {});
+        return { pageKey: page.pageKey, documentId: page.documentId, connection: bridge.connection, status: pageStatus() };
+      case 'page.activity': page.active = message.active === true; return {};
       case 'page.cancel':
         if (bridge.connection === 'ready') await bridge.call('translation.cancel', { pageKey: page.pageKey });
         return {};
@@ -98,7 +99,7 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
         accepting++;
         try {
           const result = await bridge.call('translation.submit', p); jobs.set(result.jobId, page);
-          for (const event of earlyEvents.get(result.jobId) || []) onHostEvent(event);
+          for (const event of earlyEvents.get(result.jobId) || []) onSessionEvent(event);
           earlyEvents.delete(result.jobId); return result;
         } finally { accepting--; if (!accepting) earlyEvents.clear(); }
       }
@@ -108,7 +109,8 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
   assert(extensionUI(sender), 'forbidden_sender', '仅扩展界面可以管理账号和设置。');
   switch (message.type) {
     case 'ui.state':
-      await bridge.connect(); return { connection: bridge.connection, status: bridge.status, settings: await settings() };
+      await bridge.connect().catch(() => {});
+      return { connection: bridge.connection, status: bridge.status, settings: await settings() };
     case 'ui.models': {
       const epoch = bridge.status?.accountEpoch;
       const models: Model[] = await bridge.call('models.list');
@@ -120,11 +122,15 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
       }
       return models;
     }
-    case 'ui.auth': return bridge.call('auth.begin', { accountKey: message.accountKey, reconsent: message.reconsent === true });
+    case 'ui.openSession': await openSession(); return {};
+    case 'ui.auth': return bridge.call('auth.begin', { accountKey: message.accountKey, reconsent: message.reconsent === true, newAccount: message.newAccount === true });
     case 'ui.cancelAuth': return bridge.call('auth.cancel');
     case 'ui.selectAccount': return bridge.call('account.select', { accountKey: message.accountKey });
     case 'ui.logout': return bridge.call('account.logout', { accountKey: message.accountKey });
-    case 'ui.clearCache': return bridge.call('cache.clear');
+    case 'ui.clearCache': {
+      if (bridge.connection === 'ready') return bridge.call('cache.clear');
+      const cache = translationCache(); await cache.clear(); return {};
+    }
     case 'ui.resume': await bridge.call('translation.resume'); return actOnPage('retry');
     case 'ui.page': return actOnPage(message.action);
     case 'ui.settings': {
@@ -140,13 +146,13 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
   }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
-  if (['state.changed', 'translation.event'].includes(message?.type)) return false;
-  route(message, sender).then(result => reply({ result })).catch(e => reply({ error: publicError(e), connection: bridge.connection })).finally(scheduleIdle);
+  if (['state.changed', 'translation.event', 'session.wake'].includes(message?.type)) return false;
+  route(message, sender).then(result => reply({ result })).catch(e => reply({ error: publicError(e), connection: bridge.connection }));
   return true;
 });
 chrome.tabs.onRemoved.addListener(id => {
   for (const [key, p] of pages) if (p.tabId === id) { pages.delete(key); if (bridge.connection === 'ready') void bridge.call('translation.cancel', { pageKey: key }).catch(() => {}); }
-  scheduleIdle();
+
 });
 chrome.tabs.onUpdated.addListener((id, change) => {
   if (change.status !== 'loading') return;

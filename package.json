@@ -1,6 +1,6 @@
 {
   "name": "translatemypage",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,23 +10,17 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:browser": "node scripts/browser-smoke.mjs",
     "check": "npm run typecheck && npm test && npm run build",
-    "install:host": "node scripts/install-host.mjs",
-    "uninstall:host": "node scripts/install-host.mjs --uninstall",
     "package:store": "npm run build && node scripts/package-store.mjs",
     "package:edge": "npm run build && node scripts/package-store.mjs --browser=edge"
   },
   "dependencies": {
-    "jose": "^6.1.0",
-    "proper-lockfile": "^4.1.2"
+    "jose": "^6.1.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.64.1",
     "@types/chrome": "^0.1.24",
     "@types/jsdom": "^21.1.7",
     "@types/node": "^22.18.0",
-    "@types/proper-lockfile": "^4.1.4",
     "esbuild": "^0.25.11",
     "jsdom": "^26.1.0",
     "tsx": "^4.20.0",

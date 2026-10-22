@@ -1,37 +1,22 @@
-TranslateMyPage 0.1.1 — Microsoft Edge reviewer instructions
+TranslateMyPage 0.2.0 — review instructions (draft; not submitted)
 
-Single purpose: translate a user-activated webpage or selected text while preserving the original for bilingual reading. The user can authorize their own eligible ChatGPT plan quota through official Sign in with ChatGPT. The extension and helper are free, public source under MIT.
+Single purpose: AI webpage bilingual and selected-text translation.
+Free, MIT-licensed source: https://github.com/xiaoliu-heng/translatemypage
 
-Platform dependency
-This extension requires a separately installed Native Messaging host named com.translatemypage.host. The helper supports macOS and Linux with Secret Service. Windows, ChromeOS and mobile browsers are not supported. This limitation is disclosed at the start of the listing and in the extension connection help.
+Install only the extension. There is no Native Messaging host, local HTTP listener, OS keychain bridge or Node.js runtime dependency.
 
-Install the helper from the public release downloads:
-  https://github.com/xiaoliu-heng/translatemypage/releases
-Choose the edge-helper ZIP matching version 0.1.1. It contains bundled host.cjs, an installer, macOS keychain bridge source and third-party license notices, with no user credentials. Node.js 22.16+ is required; macOS needs Xcode Command Line Tools, and Linux needs secret-tool, a working desktop Secret Service and xdg-open.
+1. Click the extension toolbar button, then Continue with ChatGPT to open its visible Translation Session tab.
+2. Click Continue with ChatGPT in that tab; sign in and consent on OpenAI's official page using an eligible personal account. No shared developer credentials are provided.
+3. Authorization returns to http://127.0.0.1:1455/auth/callback. With no local listener, a browser connection error is expected. Copy the complete URL from the address bar into the session tab's masked callback field. Submit within five minutes. Do not put the callback URL or any token in a review transcript.
+4. The extension validates state, one-time consumption, exact redirect, issued client binding, PKCE and the signed ID-token claims. Plan availability uses token-response scopes rather than login success alone.
+5. Confirm the plan usage notice, select an available model, keep the session tab open, and return to a normal HTTPS article. Open the toolbar popup and start translation; confirm content sharing on first use.
+6. Verify bilingual text, original typography and links, selected-text loading and dialogue, draggable pet, stop/restore and explicit retry.
+7. Close the session tab: requests stop and local credentials are discarded. Restart the session and verify fresh authorization. Sign out explicitly to attempt remote revocation. A failed revocation is disclosed with a link to ChatGPT settings.
+8. Test simultaneous session pages, cancelled authorization, wrong/stale callbacks, account switching, quota limits and worker disconnection. Unknown inference results must not be automatically replayed.
 
-After extracting the helper, run:
-  node scripts/install-host.mjs --browser=edge --extension-id=THE_32_CHARACTER_ID_OF_THIS_EDGE_STORE_ITEM
+Only activeTab, scripting and storage are requested, with host access limited to auth.openai.com and api.openai.com. No browser-history API, broad website permission, remote executable code or developer inference proxy is used. Tokens are held only in the visible extension session page's memory. Nonsecret registration identifiers and preferences use chrome.storage.local; account-isolated translation cache uses IndexedDB.
 
-The Edge store ID can differ from the Chrome or development ID. The installer writes this exact ID into both the native host's allowed_origins and its runtime origin check. Chrome and Edge use separate runtime configurations. To inspect the plan without installing:
-  node scripts/install-host.mjs --dry-run --browser=edge --extension-id=THE_32_CHARACTER_ID_OF_THIS_EDGE_STORE_ITEM
+The documented OpenAI flow describes a loopback listener. This project instead accepts the callback manually. Offline checks do not establish end-to-end provider compatibility. Actual installed-extension OAuth, token exchange and translation verification remains pending; do not submit this draft until that verification and current screenshots are complete.
 
-Test steps
-1. Open the Edge extension, click Reconnect if needed, then Continue with ChatGPT. Complete the official sign-in and plan-usage consent with an eligible reviewer-owned account. No shared account, token or bypass is provided.
-2. Confirm the usage notice, select an available model and target language. Availability and limits depend on the account and workspace.
-3. Open an ordinary HTTP/HTTPS article, activate Translate current page and consent to sending the selected reading content, title and matching glossary terms to OpenAI.
-4. Check that original paragraphs remain, translations retain typography and inline formatting, and links work. Stop translation to restore the original.
-5. On the activated page, select a short body-text sentence. The companion approaches it with a pulsing light, then opens the result dialog after a complete validated result. Check Alt+T, Escape, close, retry, dragging and reduced-motion behavior.
-6. Disconnect the helper and check the explicit installation guidance. In Edge it includes --browser=edge and this extension's actual ID.
-
-Privacy and executable code
-The local helper directly contacts OpenAI for sign-in, model catalog and streamed Responses requests, with store:false. Credentials are held in macOS Keychain / Linux Secret Service, not browser extension storage. There is no developer-operated inference proxy, analytics or advertising integration.
-
-All extension executable code is inside the uploaded ZIP. Model outputs are validated data rendered through local DOM nodes. Remote JavaScript and model-generated HTML are not executed. The native helper is a separately installed dependency with public source.
-
-Scope
-Ordinary main-document HTTP/HTTPS reading content. No incognito, complex shadow-root selection, cross-origin iframes, PDF, EPUB, subtitles or OCR. Interface primarily Simplified Chinese.
-
-Publisher: xiaoliu-heng
-Support and privacy: xiaoliublog@gmail.com
-Source and MIT license: https://github.com/xiaoliu-heng/translatemypage
+Support: xiaoliublog@gmail.com
 Privacy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md

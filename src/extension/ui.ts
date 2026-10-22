@@ -1,7 +1,7 @@
 import { DEFAULT_SETTINGS, Model, Settings, Status } from '../shared/protocol';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const nativeBrowser = /\bEdg\//.test(navigator.userAgent) ? 'edge' : 'chrome';
-$('installCommand').textContent = `node scripts/install-host.mjs --browser=${nativeBrowser} --extension-id=${chrome.runtime.id}`;
+const mode = document.body.dataset.mode;
+let session: import('./session').SessionRuntime | undefined;
 let status: Status | undefined, settings: Settings = DEFAULT_SETTINGS;
 let models: Model[] = [], modelsAccount = '', loadingModels = false;
 let pendingAction = '';
@@ -18,13 +18,13 @@ function click(id: string, action: () => Promise<any> | void): void {
   $(id).onclick = async () => {
     const button = $<HTMLButtonElement>(id); button.disabled = true; feedback('');
     try { await action(); } catch (e) { feedback(e instanceof Error ? e.message : '操作失败。'); }
-    finally { button.disabled = false; }
+    finally { button.disabled = false; renderStatus(); }
   };
 }
 function renderConnection(connection: string): void {
-  $('connection').textContent = ({ ready: '本地助手已连接', connecting: '正在连接助手', missing: '需要安装本地助手', disconnected: '助手已断开', incompatible: '需要更新本地助手' } as Record<string, string>)[connection] || connection;
+  $('connection').textContent = connection === 'ready' ? '翻译会话已连接' : '请打开翻译会话登录';
   $('connectionDot').classList.toggle('ready', connection === 'ready');
-  $('installHelp').hidden = connection === 'ready';
+  $('sessionHint').hidden = mode === 'session';
 }
 function fillSelect(id: string, values: { value: string; label: string }[], selected?: string): void {
   const select = $<HTMLSelectElement>(id); select.replaceChildren();
@@ -38,9 +38,18 @@ function renderStatus(): void {
   $('identity').textContent = active ? identityLabels[active.identity] : '未登录';
   $('plan').textContent = active ? planLabels[active.plan] : '未授予套餐权限';
   $('signIn').textContent = status?.authorizing ? '正在浏览器中授权…' : 'Continue with ChatGPT';
-  $<HTMLButtonElement>('signIn').disabled = !!status?.authorizing;
+  $<HTMLButtonElement>('signIn').disabled = !!status?.authorizing || !!status?.signingOut || mode === 'session' && !session;
   $('cancelAuth').hidden = !status?.authorizing; $('logout').hidden = !active || active.identity === 'signed_out';
-  $('addAccount').hidden = !active || !!status?.authorizing;
+  $('addAccount').hidden = !!status?.authorizing || mode !== 'session';
+  $('addAccount').textContent = '添加其他账号';
+  $<HTMLButtonElement>('addAccount').disabled = !!status?.signingOut || mode === 'session' && !session;
+  $<HTMLButtonElement>('logout').disabled = !!status?.signingOut;
+  $('logout').textContent = status?.signingOut ? '正在退出…' : '退出';
+  $<HTMLSelectElement>('accounts').disabled = !!status?.signingOut;
+  $('callbackStep').hidden = mode !== 'session' || !status?.authorization;
+  $<HTMLButtonElement>('completeAuth').disabled = !session || !!status?.authorization?.exchanging;
+  $('completeAuth').textContent = status?.authorization?.exchanging ? '正在验证登录…' : '验证并完成登录';
+  if (!status?.authorization) $<HTMLInputElement>('callbackUrl').value = '';
   $('notice').hidden = !status?.notice; $('notice').textContent = status?.notice || '';
   $<HTMLButtonElement>('translate').disabled = !active || active.identity !== 'signed_in' || active.plan === 'not_granted';
   if (active?.identity === 'signed_in' && active.plan !== 'not_granted' && !settings.acknowledgedPlan && !$<HTMLDialogElement>('planDialog').open) $<HTMLDialogElement>('planDialog').showModal();
@@ -71,12 +80,19 @@ async function pageAction(action: string): Promise<void> {
   if (!settings.acknowledgedSharing && action !== 'stop') { pendingAction = action; $<HTMLDialogElement>('sharingDialog').showModal(); return; }
   await rpc('ui.page', { action }); feedback(action === 'stop' ? '已恢复原文，小球休息中。' : '已开始，网页小球会显示翻译状态；选中文字可直接翻译。');
 }
-click('reconnect', load);
+click('openSession', () => rpc('ui.openSession'));
 click('signIn', () => {
+  if (mode !== 'session') return rpc('ui.openSession');
   const a = status?.accounts.find(a => a.key === status?.activeKey);
   return rpc('ui.auth', { accountKey: status?.activeKey, reconsent: a?.identity === 'signed_in' && a.plan === 'not_granted' });
 });
-click('addAccount', () => rpc('ui.auth'));
+click('addAccount', () => rpc('ui.auth', { newAccount: true }));
+click('completeAuth', async () => {
+  const input = $<HTMLInputElement>('callbackUrl'); const raw = input.value; input.value = '';
+  if (!session) throw new Error('请先打开翻译会话。');
+  await session.complete(raw); feedback('登录验证完成，可以切回网页开始翻译。');
+});
+$<HTMLInputElement>('callbackUrl').addEventListener('keydown', event => { if (event.key === 'Enter') $<HTMLButtonElement>('completeAuth').click(); });
 click('cancelAuth', () => rpc('ui.cancelAuth'));
 click('logout', () => rpc('ui.logout', { accountKey: status?.activeKey }));
 click('refreshModels', refreshModels);
@@ -107,8 +123,17 @@ for (const id of ['targetLanguage', 'sourceLanguage']) $(id).onchange = () => vo
 $('model').onchange = () => { if (status?.activeKey) void save({ models: { ...settings.models, [status.activeKey]: $<HTMLSelectElement>('model').value } }).catch(e => feedback(e.message)); };
 $('accounts').onchange = () => void rpc('ui.selectAccount', { accountKey: $<HTMLSelectElement>('accounts').value }).catch(e => feedback(e.message));
 chrome.runtime.onMessage.addListener(m => { if (m.type === 'state.changed') { status = m.status; renderConnection(m.connection); renderStatus(); } return false; });
-if (document.body.dataset.mode === 'options') {
+if (mode === 'options' || mode === 'session') {
   $('advanced').hidden = false; $('openOptions').hidden = true;
   for (const id of ['translate', 'selection', 'restore', 'resume']) $(id).hidden = true;
 }
-void load().catch(e => feedback(e.message));
+if (mode === 'session') {
+  $('sessionIntro').hidden = false;
+  $<HTMLButtonElement>('signIn').disabled = true;
+  $('openSession').hidden = true;
+  document.title = 'TranslateMyPage · 翻译会话（请保持打开）';
+  void import('./session').then(m => m.startSession()).then(runtime => { session = runtime; return load(); }).catch(e => {
+    feedback(e.message); $('openSession').hidden = false;
+    for (const id of ['signIn', 'addAccount', 'completeAuth']) $<HTMLButtonElement>(id).disabled = true;
+  });
+} else void load().catch(e => feedback(e.message));

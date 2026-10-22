@@ -1,7 +1,7 @@
 {
   "checkedOn": "2026-10-22",
   "browser": "edge",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "xiaoliu-heng",
   "supportEmail": "xiaoliublog@gmail.com",
   "pricing": "free",
@@ -9,28 +9,24 @@
   "repositoryUrl": "https://github.com/xiaoliu-heng/translatemypage",
   "sourcePublished": true,
   "privacyPolicyPublished": true,
-  "privacyPolicyUrl": "https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md",
-  "releaseAssetsPublished": true,
+  "releaseAssetsPublished": false,
   "storeSubmitted": false,
   "storeUrl": null,
   "extensionId": null,
-  "edgeRuntimeTested": false,
-  "status": "prepared_not_submitted",
-  "blockers": [
-    "Microsoft Partner Center is at the personal Microsoft account sign-in page; account selection is pending.",
-    "Microsoft Edge was installed from its official distribution via Homebrew, but its first launch is not responding; browser runtime testing is incomplete."
-  ],
-  "nativeHelperTested": true,
+  "status": "local_development_pending_end_to_end_verification",
   "validation": {
     "typecheck": "passed",
-    "offlineTests": 38,
+    "offlineTests": 51,
     "build": "passed",
-    "zipAudit": "passed",
-    "nativeHelperHandshake": "passed_0.1.1",
-    "edgeBrowserRuntime": "pending"
+    "installedExtensionOAuth": "pending",
+    "realTranslation": "pending",
+    "currentVersionScreenshots": "pending",
+    "zipAudit": "passed"
   },
-  "releaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.1",
-  "releaseIsPrerelease": true,
-  "anonymousDownloadsVerified": true,
-  "sourceTreeCommit": "d4ea6849734caa522fd7884b69782a17a3965b90"
+  "previousReleaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.1",
+  "blockers": [
+    "Installed-extension manual callback exchange and real translation must be verified.",
+    "Capture current-version screenshots before submission.",
+    "Verify developer dashboard access and complete the store submission."
+  ]
 }
