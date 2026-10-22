@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TranslateMyPage 隐私政策</title>
+<style>body{max-width:800px;margin:50px auto;padding:0 24px;font:16px/1.85 system-ui,-apple-system,"PingFang SC",sans-serif;color:#243d33;background:#fafbf7}h1{font-size:30px}h2{margin-top:32px;font-size:20px}a{color:#236549}td,th{padding:10px;border:1px solid #cbd7c7;text-align:left}table{border-collapse:collapse;width:100%}.meta{color:#63766a}code{overflow-wrap:anywhere}</style>
+<h1>TranslateMyPage 隐私政策</h1>
+<p class="meta">生效日期：2026 年 10 月 22 日 · 适用版本：0.1.0</p>
+<p>TranslateMyPage 是由 xiaoliu-heng 维护的免费开源网页翻译扩展及本地助手，使用用户通过官方流程授权的 ChatGPT 套餐进行翻译。隐私联系邮箱：<a href="mailto:xiaoliublog@gmail.com">xiaoliublog@gmail.com</a>。</p>
+<h2>1. 处理哪些数据、为什么处理</h2>
+<table><tr><th>数据</th><th>用途和去向</th></tr>
+<tr><td>用户主动选择翻译的正文、选中文字、页面标题、命中的术语和语言设置</td><td>首次翻译前说明并征得同意后，由本地助手通过 HTTPS 发往 OpenAI 的模型接口，用于生成译文。页面的链接地址、CSS 和可执行网页代码不会作为格式还原内容发送给模型。</td></tr>
+<tr><td>当前被激活网页的地址、站点名称与页面生命周期标识</td><td>仅在本地用于临时页面权限、站点术语选择、页面变化检查与结果归属。扩展不调用浏览历史 API，不建立浏览历史档案，也不把完整页面地址加入模型提示。</td></tr>
+<tr><td>官方登录返回的姓名、邮箱、账号主体、客户端注册标识和授权状态</td><td>用于识别、选择账号和显示授权状态，保存在本机的账号命名空间内。</td></tr>
+<tr><td>OAuth 访问令牌、刷新令牌和身份令牌</td><td>由本地助手管理，仅用于 OpenAI 授权、会话刷新、模型调用和退出撤销。macOS 使用系统钥匙串；Linux 使用桌面 Secret Service。令牌不保存在 Chrome 扩展存储中。</td></tr>
+<tr><td>稳定的随机安装/Host 标识</td><td>用于区分本机安装、隔离账号资料及按官方接口要求关联套餐调用。Host 标识发送给 OpenAI，不使用邮箱或硬件指纹代替。</td></tr>
+<tr><td>译文、缓存键、最近使用时间、模型和翻译设置、小球停靠位置</td><td>缓存在本机以复用译文和保存用户偏好。扩展的术语、语言、模型设置与小球位置保存在 Chrome 本地存储，不使用 Chrome 同步存储。</td></tr></table>
+<h2>2. 与谁共享</h2>
+<p>OpenAI 是身份授权与模型推理服务的提供方，会收到完成对应功能所必需的授权和翻译请求。请求不经过开发者的中转服务器。TranslateMyPage 不运营采集翻译内容的远程服务器，不出售用户数据，不接入广告、分析或第三方追踪 SDK，不向数据经纪商提供数据。</p>
+<p>本地助手以 <code>store: false</code> 发起模型请求，但这不等于承诺 OpenAI 不进行任何服务侧处理或保留。OpenAI 的数据处理、保留期限和账号控制以你与 OpenAI 的适用条款及隐私设置为准。扩展不读取 ChatGPT 历史对话。</p>
+<h2>3. 权限和触发方式</h2>
+<p><code>activeTab</code> 与 <code>scripting</code> 用于你激活当前普通网页后注入本地翻译代码；<code>storage</code> 保存本地设置与安装标识；<code>nativeMessaging</code> 连接你另外安装的本地助手。无需对所有站点持续访问，也不请求浏览历史权限。只有你开启当前页翻译或发起划词操作后才提交翻译请求。当前页的动态增量翻译持续到你停止翻译、离开页面或关闭页面。</p>
+<p>表单、密码框、可编辑输入区和代码块默认排除。复杂网页仍可能把个人信息写在普通正文内；请在翻译前确认选区和正文是否适合发送。无痕窗口不受支持。</p>
+<h2>4. 本地存储与保留</h2>
+<p>模型凭据保存在操作系统凭据库。账号资料与缓存位于用户自己的应用数据目录，目录权限为 0700、文本文件权限为 0600。译文缓存按账号隔离，最多保留 2,000 条，按最近使用淘汰。缓存保存的是经验证的完整译文和摘要键，不是加密保险库；它与本机其他用户文件一样受操作系统及本机访问权限保护。</p>
+<p>偏好、账号元数据和未淘汰的缓存会保留到你清除或删除。退出账号会尝试撤销远端会话并删除该注册的本地凭据，但会保留客户端注册标识，以便再次授权。只卸载浏览器扩展或注销本地助手不会自动清除其全部账号元数据、缓存或系统凭据。</p>
+<h2>5. 你的控制和删除方式</h2>
+<ul><li>随时关闭网页翻译、关闭划词对话框或恢复原文。</li><li>在扩展设置中清空本地译文缓存，修改或删除术语与站点排除规则。</li><li>在扩展中退出账号，在 ChatGPT 中管理或撤销本应用的套餐授权。</li><li>如要删除本地全部资料，先退出账号并停止助手，再删除 macOS 的 <code>~/Library/Application Support/TranslateMyPage/</code>，或 Linux 的 <code>${XDG_DATA_HOME:-~/.local/share}/translatemypage/</code>。若未能正常退出，请同时在系统钥匙串或 Secret Service 中删除以 <code>com.translatemypage.</code> 开头的对应凭据项。</li><li>浏览器扩展的本地设置随扩展移除而清除；也可通过 Chrome 管理相应扩展数据。</li></ul>
+<h2>6. 有限使用承诺</h2>
+<p>本扩展处理的数据仅用于所披露的网页翻译、账号授权与相关运行功能，不用于广告定向、信用或借贷判断等无关目的，不出售，也不转移给与上述功能无关的第三方。TranslateMyPage 对用户数据的使用遵守 Chrome Web Store User Data Policy，包括其 Limited Use 要求。</p>
+<h2>7. 更新与联系</h2>
+<p>若数据用途或共享方式发生实质变化，会更新本政策，并在需要时先向用户披露并重新征得同意。如有隐私、访问或删除问题，请联系 <a href="mailto:xiaoliublog@gmail.com">xiaoliublog@gmail.com</a>。开发者无法从远端读取或删除仅保存在用户本机的资料。</p>
+<p class="meta">TranslateMyPage 与 OpenAI、ChatGPT 或 Immersive Translate 没有隶属关系。</p>
+</html>
