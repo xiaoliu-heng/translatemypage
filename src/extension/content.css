@@ -1,0 +1,17 @@
+.tmp-translation[data-tmp-owned="translation"] {
+  all: unset !important;
+  display: block !important;
+  font: inherit !important;
+  color: inherit !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
+  word-spacing: inherit !important;
+  text-align: inherit !important;
+  text-indent: inherit !important;
+  text-transform: inherit !important;
+  white-space: inherit !important;
+  word-break: inherit !important;
+  overflow-wrap: inherit !important;
+  direction: inherit !important;
+  writing-mode: inherit !important;
+}
