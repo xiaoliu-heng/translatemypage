@@ -1,0 +1,40 @@
+TranslateMyPage 0.1.0 — reviewer instructions
+
+Single purpose: translate a user-activated webpage or selected text using the user's explicitly authorized ChatGPT plan, while retaining the original for bilingual reading.
+
+Dependencies and platform support
+This extension requires a separately installed, open-source Native Messaging host named com.translatemypage.host. The initial helper supports macOS and Linux with Secret Service; Windows and ChromeOS are not supported. This requirement is prominently disclosed in the listing and extension connection help.
+
+The helper ZIP contains bundled host.cjs, its installer, source for the macOS keychain bridge, a README and third-party notices. It contains no user credentials. Installation uses a stable absolute path for Node.js 22.16+. macOS requires Xcode Command Line Tools to compile the bridge; Linux requires secret-tool and a working desktop Secret Service.
+
+Install the helper after extracting its ZIP:
+  node scripts/install-host.mjs --extension-id=THE_32_CHARACTER_ID_OF_THIS_STORE_ITEM
+
+Use the exact extension ID assigned to this store item. The installer writes that ID both to the Native Messaging registration's allowed_origins and to the host's origin-check configuration. Review the plan without changing files:
+  node scripts/install-host.mjs --dry-run --extension-id=THE_32_CHARACTER_ID_OF_THIS_STORE_ITEM
+
+Testing
+1. Open the extension and select Continue with ChatGPT. Complete the official browser sign-in and explicit ChatGPT plan-usage consent with an eligible reviewer-owned account. There are no shared review credentials or bypass accounts.
+2. Confirm the plan-usage notice. The app lists the models actually available to the authorized account; pick a model and target language.
+3. Open a normal HTTP/HTTPS article. Click Translate current page and consent to sending the selected reading content, title and matching glossary entries to OpenAI.
+4. Verify original paragraphs remain in place, translations preserve their typography/inline formatting, and links still work. Stop translation to restore the original.
+5. On the activated page, select a short body-text sentence. The companion approaches the selection with a pulsing light and opens a game-style result dialog only after receiving a complete validated result. Alt+T is also supported.
+6. Drag the companion, close the dialog, press Escape, restore the page, reload settings, and check that no stale result reopens a dismissed dialog. Reduced motion is respected.
+7. On an unavailable native host, show the installation guidance. On a failed inference, display an explicit retry; do not silently resubmit an unknown completed request.
+
+Data and code
+Only the user-authorized local host talks to OpenAI for sign-in, model catalog and Responses SSE. Translation requests use store:false and stream:true. The extension has no analytics endpoint, custom inference proxy or advertising integration. OAuth secrets are held by macOS Keychain / Linux Secret Service, not Chrome extension storage.
+
+All extension executable code is shipped in the ZIP. Model outputs are validated data and rendered using safe local nodes; neither remote scripts nor model-generated HTML are executed. The helper is a separately installed native dependency with public source.
+
+Known scope
+Regular main-document HTTP/HTTPS reading content is supported. Incognito, complex shadow-root selection, cross-origin iframes, PDF, EPUB, subtitles and OCR are outside this initial release. The interface is primarily Simplified Chinese.
+
+Publisher: xiaoliu-heng
+Support and privacy contact: xiaoliublog@gmail.com
+
+Public source, helper download and privacy URLs must be supplied in the corresponding dashboard fields before submission. The release status file records which URLs and the assigned store item ID are still pending.
+
+Public source: https://github.com/xiaoliu-heng/translatemypage/tree/main
+Helper and versioned source downloads: https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.0
+Privacy policy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md

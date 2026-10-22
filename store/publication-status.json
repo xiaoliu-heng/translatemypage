@@ -1,0 +1,25 @@
+{
+  "checkedOn": "2026-10-22",
+  "repositoryUrl": "https://github.com/xiaoliu-heng/translatemypage",
+  "repositoryCreated": true,
+  "descriptionPublished": true,
+  "readmePublished": true,
+  "licensePublished": true,
+  "privacyCommit": "87e45406095947a321e02da471c2d203487ac153",
+  "sourcePublished": true,
+  "sourceDistribution": "repository_and_release_zip",
+  "privacyPolicyPublished": true,
+  "releaseAssetsPublished": true,
+  "browserFileUploadEnabled": true,
+  "storeSubmitted": false,
+  "storeUrl": null,
+  "blockers": [
+    "Chrome browser automation still rejects navigation to the developer dashboard; no store item or review submission has been created."
+  ],
+  "sourceTreePublished": true,
+  "releaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.0",
+  "gitPushAuthenticated": true,
+  "anonymousDownloadsVerified": true,
+  "sourceTreeUrl": "https://github.com/xiaoliu-heng/translatemypage/tree/main",
+  "gitProtocol": "https"
+}
