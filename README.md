@@ -6,7 +6,7 @@ TranslateMyPage 翻译网页和选中文字，保留原文对照与网页排版�
 
 免费开源，采用 [MIT 许可证](LICENSE)。维护者：xiaoliu-heng；支持邮箱：xiaoliublog@gmail.com。
 
-> Chrome 商店版本尚未提交审核。完整源码位于当前仓库；[Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 同时提供按版本打包的源码与配套助手。扩展需要另外安装本地助手；支持 macOS 和具备 Secret Service 的 Linux，Windows / ChromeOS 暂不支持。
+> Edge 商店版本正在准备，Chrome 商店版本尚未提交审核。完整源码位于当前仓库；[Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 提供已发布版本的源码与配套助手。扩展需要另外安装本地助手；支持 macOS 和具备 Secret Service 的 Linux，Windows / ChromeOS / 移动端暂不支持。构建或发布下载包不表示已经上架商店。
 
 ## 主要功能
 
@@ -26,7 +26,7 @@ git clone https://github.com/xiaoliu-heng/translatemypage.git
 cd translatemypage
 ```
 
-也可以从 [Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 下载 `TranslateMyPage-0.1.0-source.zip` 并解压。在源码目录运行以下命令。
+也可以从 [Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 下载对应版本明确命名的 `TranslateMyPage-版本-source.zip` 并解压。在源码目录运行以下命令。
 
 需要 Node.js 22.16+。macOS 还需 Xcode Command Line Tools；Linux 还需 `secret-tool`、桌面 Secret Service 和 `xdg-open`。
 
@@ -36,36 +36,42 @@ npm run build
 npm run install:host
 ```
 
-1. 在 Chrome 扩展管理页启用开发者模式，加载 `dist/extension`。
+1. 在 Chrome 或 Edge 的扩展管理页启用开发者模式，加载 `dist/extension`。
 2. 打开扩展，点击 **Continue with ChatGPT**，在官方网页登录并授权使用套餐额度。
 3. 确认套餐用量说明，选择可用模型和目标语言。
 4. 在普通网页点击翻译，确认内容发送说明后开始双语阅读。当前页激活后可直接划词翻译。
 
-Edge 使用 `npm run install:host -- --browser=edge`。安装目标还支持 `chromium`、`testing`。助手安装器会记录当前 Node 的绝对路径，移动或删除 Node 版本后请重新安装。
+Edge 使用 `npm run install:host -- --browser=edge`。Chrome 和 Edge 各自保留独立的助手运行配置；安装一个不会覆盖另一个的扩展 ID。安装目标还支持 `chromium`、`testing`。助手安装器会记录当前 Node 的绝对路径，移动或删除 Node 版本后请重新安装。
 
 ## 安装商店版的配套助手
 
-从 [Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 下载 helper ZIP，解压后在该目录运行：
+从 [Releases](https://github.com/xiaoliu-heng/translatemypage/releases) 下载与浏览器、扩展版本对应的 helper ZIP。Edge 选择 `edge-helper.zip`，解压后在该目录运行：
+
+```sh
+node scripts/install-host.mjs --browser=edge --extension-id=Edge商店条目的32位扩展ID
+```
+
+Chrome 助手的命令为：
 
 ```sh
 node scripts/install-host.mjs --extension-id=商店条目的32位扩展ID
 ```
 
-扩展 ID 可从商店网址末尾或扩展详情页复制。安装器会把同一 ID 写入 Native Messaging 的允许来源和 Host 自身的来源校验配置；不能把开发版 ID 直接用于商店版。
+扩展 ID 可从商店网址末尾或扩展详情页复制。Edge 与 Chrome 的商店 ID 可能不同。安装器会把同一 ID 写入对应浏览器 Native Messaging 的允许来源和 Host 自身的来源校验配置；不能把开发版 ID 直接用于商店版。
 
 检查安装计划而不写入文件：
 
 ```sh
-node scripts/install-host.mjs --dry-run --extension-id=商店条目的32位扩展ID
+node scripts/install-host.mjs --dry-run --browser=edge --extension-id=Edge商店条目的32位扩展ID
 ```
 
 在扩展内退出账号后，可注销助手：
 
 ```sh
-node scripts/install-host.mjs --uninstall
+node scripts/install-host.mjs --browser=edge --uninstall
 ```
 
-注销只移除浏览器注册，保留本地资料。完整数据清除方式见 [隐私政策](PRIVACY.md)。
+Chrome 使用 `--browser=chrome`，或省略该参数。注销只移除所选浏览器的注册，保留本地资料。完整数据清除方式见 [隐私政策](PRIVACY.md)。
 
 ## 数据与权限
 
@@ -77,7 +83,7 @@ node scripts/install-host.mjs --uninstall
 
 ## 本地 Host
 
-Host 是浏览器按需启动的独立 Node.js 后台进程，没有单独桌面窗口。连接、账号、模型与重试入口在扩展界面。
+本地助手（Host）负责 ChatGPT 官方登录、系统凭据保管和翻译请求；扩展负责读取用户激活的网页并显示译文。它是浏览器按需启动的独立 Node.js 进程，没有单独桌面窗口。AI 模型在 OpenAI 运行，助手不在本机运行大模型。连接、账号、模型与重试入口在扩展界面。
 
 ```text
 网页小球 / 划词
@@ -88,18 +94,19 @@ Host 是浏览器按需启动的独立 Node.js 后台进程，没有单独桌面
   → 操作系统凭据库、本机缓存、OpenAI Responses SSE
 ```
 
-构建产物是 `dist/host/host.cjs`。macOS 运行目录为 `~/Library/Application Support/TranslateMyPage/runtime/`；Linux 为用户数据目录下的 `TranslateMyPage/runtime/`。账号与缓存分别由 `src/host/storage.ts` 中的 `dataRoot()` 管理。浏览器第一次连接时拉起 Host，扩展空闲 60 秒且无任务/登录时断开；Host 在输入流关闭后退出，无需额外启动 HTTP 服务。
+构建产物是 `dist/host/host.cjs`。macOS 运行目录为 `~/Library/Application Support/TranslateMyPage/runtime/<browser>/`；Linux 为用户数据目录下的 `TranslateMyPage/runtime/<browser>/`，其中 `<browser>` 为 `chrome` 或 `edge` 等安装目标。账号与缓存分别由 `src/host/storage.ts` 中的 `dataRoot()` 管理。浏览器第一次连接时拉起 Host，扩展空闲 60 秒且无任务/登录时断开；Host 在输入流关闭后退出，无需额外启动 HTTP 服务。
 
 ## 开发与发布
 
 ```sh
 npm run check          # 类型检查、离线测试、构建
-npm run package:store  # 商店 ZIP、助手 ZIP、源码 ZIP、上架材料与校验和
+npm run package:store  # Chrome ZIP、助手 ZIP、源码 ZIP、上架材料与校验和
+npm run package:edge   # Edge 专用 ZIP、助手、源码、上架材料与校验和
 # 获得商店 ID 后可重打助手包：
-node scripts/package-store.mjs --extension-id=商店条目的32位扩展ID
+node scripts/package-store.mjs --browser=edge --extension-id=Edge商店条目的32位扩展ID
 ```
 
-`release/0.1.0/` 为生成的发布目录，`release-status.json` 明确标注是否仍待提交；构建成功不表示已通过商店审核。安装包采用允许列表，不包含本地账号、凭据、缓存、录制日志或浏览器资料。商店包不包含开发公钥与 source map。
+`release/0.1.1/` 为当前 Chrome 发布目录，`release/0.1.1/edge/` 为 Edge 发布目录。`release-status.json` 明确标注是否仍待提交；构建成功不表示已通过商店审核。安装包采用允许列表，不包含本地账号、凭据、缓存、录制日志或浏览器资料。商店包不包含开发公钥、update_url 与 source map。v0.1.0 已公开的归档保持不变。
 
 `extension-public-key.json` 只含开发公钥，用于固定开发版 ID。商店 ID 由商店分配，配套助手以实际 ID 注册。
 

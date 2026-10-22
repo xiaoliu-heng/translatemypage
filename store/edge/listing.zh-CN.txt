@@ -1,0 +1,41 @@
+名称
+TranslateMyPage：AI 沉浸式双语翻译
+
+简短介绍
+AI 网页翻译，原文译文对照、保留排版，支持划词翻译。可使用自己已授权的 ChatGPT 订阅额度。需安装 macOS / Linux 本地助手。
+
+详细介绍
+AI 网页翻译，让你在原网页持续阅读。
+
+TranslateMyPage 是一款免费开源的 Microsoft Edge 翻译扩展，支持沉浸式双语阅读、划词翻译与网页排版保留。原文留在原位，译文贴近上下文；翻译请求可使用你通过官方流程授权的 ChatGPT 订阅额度。
+
+安装要求：当前版本需要另外安装本地助手，仅支持 macOS，以及具备桌面 Secret Service 的 Linux。Windows、ChromeOS 和移动端暂不支持。助手需要 Node.js 22.16+；macOS 还需 Xcode Command Line Tools，Linux 还需 secret-tool 和 xdg-open。
+
+【沉浸式双语阅读】
+按段落展示原文与译文，保留对应文本的字体、字号、颜色、行距，以及链接、加粗、斜体和行内代码等格式。支持标题、段落、列表和表格，增量处理动态网页中的新内容，也可恢复原文。
+
+【划词即译】
+激活当前页面后，选中正文并松开鼠标，翻译小球会跑到选区旁等待，完成后展开游戏风格对话框。也可使用 Alt+T；支持关闭、Escape 和手动重试。
+
+【会表达状态的小球】
+闭眼睡觉表示未开启翻译，睁眼和闪烁的灯光表示正在翻译，灯泡常亮表示已就绪。小球可以自由拖动，并记住停靠位置。唤醒、移动和对话框开合有过渡动画，支持系统的“减少动态效果”。
+
+【共用自己的 ChatGPT 订阅额度】
+在官方页面登录并授权，读取当前账号实际可用的模型，无需另填 OpenAI API 密钥。翻译会计入你授权的 ChatGPT 套餐额度；可用模型、资格与限制以账号、工作区及 OpenAI 的设置为准。TranslateMyPage 本身免费，采用 MIT 许可证，不额外收取订阅费。
+
+【本地助手与隐私】
+助手负责账号连接、系统凭据库访问和翻译请求；扩展负责网页内容与译文显示。浏览器按需启动助手，AI 模型在 OpenAI 运行。登录凭据保存在系统钥匙串 / Secret Service；译文缓存在本机。翻译请求直接发送给 OpenAI，无开发者中转服务器、广告或分析 SDK。
+
+首次翻译前会披露将待译文字、页面标题和命中的术语发送给 OpenAI，并征得同意。扩展仅在用户操作后取得当前页的临时访问权限；表单、密码框、可编辑输入区与代码块默认排除，无痕窗口不支持。
+
+使用范围
+• 只安装 Edge 扩展无法完成翻译；请按设置页指引下载并安装助手。
+• 需要符合条件并已授权套餐调用的 ChatGPT 账号。
+• 支持普通 HTTP/HTTPS 主文档；复杂 Shadow DOM、跨域 iframe、PDF、EPUB、字幕和 OCR 暂不支持。
+• 界面主要为简体中文。AI 翻译可能有误，请结合原文判断。
+
+源码与安装：https://github.com/xiaoliu-heng/translatemypage
+配套助手：https://github.com/xiaoliu-heng/translatemypage/releases
+支持：xiaoliublog@gmail.com
+
+TranslateMyPage 独立开发，与 Microsoft、OpenAI、ChatGPT 或“沉浸式翻译 / Immersive Translate”无隶属关系。

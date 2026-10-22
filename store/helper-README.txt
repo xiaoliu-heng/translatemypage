@@ -1,4 +1,4 @@
-TranslateMyPage local helper — 0.1.0
+TranslateMyPage local helper — 0.1.1
 
 This helper is required for the TranslateMyPage Chrome extension. It handles official ChatGPT authorization, operating-system credential storage, translation requests and the local cache.
 
@@ -19,7 +19,7 @@ Install
 
 4. Open the Chrome extension and click Reconnect, then Continue with ChatGPT. Complete sign-in and plan-usage consent on the official webpage.
 
-This does not install a background HTTP server. Chrome starts the helper through Native Messaging when needed. The installer copies the runtime into your own application-data folder and records an absolute Node.js path. Reinstall the helper if you remove or change that Node.js installation.
+This does not install a background HTTP server. Chrome starts the helper through Native Messaging when needed. The installer copies the runtime into TranslateMyPage/runtime/chrome in your own application-data folder and records an absolute Node.js path. Reinstall the helper if you remove or change that Node.js installation. Each browser has a separate runtime configuration so an Edge installation does not replace Chrome's permitted extension ID.
 
 For Edge, add --browser=edge. Other installer targets: chrome, chromium, testing.
 

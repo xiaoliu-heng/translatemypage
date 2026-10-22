@@ -1,0 +1,37 @@
+TranslateMyPage 0.1.1 — Microsoft Edge reviewer instructions
+
+Single purpose: translate a user-activated webpage or selected text while preserving the original for bilingual reading. The user can authorize their own eligible ChatGPT plan quota through official Sign in with ChatGPT. The extension and helper are free, public source under MIT.
+
+Platform dependency
+This extension requires a separately installed Native Messaging host named com.translatemypage.host. The helper supports macOS and Linux with Secret Service. Windows, ChromeOS and mobile browsers are not supported. This limitation is disclosed at the start of the listing and in the extension connection help.
+
+Install the helper from the public release downloads:
+  https://github.com/xiaoliu-heng/translatemypage/releases
+Choose the edge-helper ZIP matching version 0.1.1. It contains bundled host.cjs, an installer, macOS keychain bridge source and third-party license notices, with no user credentials. Node.js 22.16+ is required; macOS needs Xcode Command Line Tools, and Linux needs secret-tool, a working desktop Secret Service and xdg-open.
+
+After extracting the helper, run:
+  node scripts/install-host.mjs --browser=edge --extension-id=THE_32_CHARACTER_ID_OF_THIS_EDGE_STORE_ITEM
+
+The Edge store ID can differ from the Chrome or development ID. The installer writes this exact ID into both the native host's allowed_origins and its runtime origin check. Chrome and Edge use separate runtime configurations. To inspect the plan without installing:
+  node scripts/install-host.mjs --dry-run --browser=edge --extension-id=THE_32_CHARACTER_ID_OF_THIS_EDGE_STORE_ITEM
+
+Test steps
+1. Open the Edge extension, click Reconnect if needed, then Continue with ChatGPT. Complete the official sign-in and plan-usage consent with an eligible reviewer-owned account. No shared account, token or bypass is provided.
+2. Confirm the usage notice, select an available model and target language. Availability and limits depend on the account and workspace.
+3. Open an ordinary HTTP/HTTPS article, activate Translate current page and consent to sending the selected reading content, title and matching glossary terms to OpenAI.
+4. Check that original paragraphs remain, translations retain typography and inline formatting, and links work. Stop translation to restore the original.
+5. On the activated page, select a short body-text sentence. The companion approaches it with a pulsing light, then opens the result dialog after a complete validated result. Check Alt+T, Escape, close, retry, dragging and reduced-motion behavior.
+6. Disconnect the helper and check the explicit installation guidance. In Edge it includes --browser=edge and this extension's actual ID.
+
+Privacy and executable code
+The local helper directly contacts OpenAI for sign-in, model catalog and streamed Responses requests, with store:false. Credentials are held in macOS Keychain / Linux Secret Service, not browser extension storage. There is no developer-operated inference proxy, analytics or advertising integration.
+
+All extension executable code is inside the uploaded ZIP. Model outputs are validated data rendered through local DOM nodes. Remote JavaScript and model-generated HTML are not executed. The native helper is a separately installed dependency with public source.
+
+Scope
+Ordinary main-document HTTP/HTTPS reading content. No incognito, complex shadow-root selection, cross-origin iframes, PDF, EPUB, subtitles or OCR. Interface primarily Simplified Chinese.
+
+Publisher: xiaoliu-heng
+Support and privacy: xiaoliublog@gmail.com
+Source and MIT license: https://github.com/xiaoliu-heng/translatemypage
+Privacy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md

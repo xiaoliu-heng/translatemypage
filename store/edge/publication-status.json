@@ -1,0 +1,22 @@
+{
+  "checkedOn": "2026-10-22",
+  "browser": "edge",
+  "version": "0.1.1",
+  "publisher": "xiaoliu-heng",
+  "supportEmail": "xiaoliublog@gmail.com",
+  "pricing": "free",
+  "license": "MIT",
+  "repositoryUrl": "https://github.com/xiaoliu-heng/translatemypage",
+  "sourcePublished": true,
+  "privacyPolicyPublished": true,
+  "privacyPolicyUrl": "https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md",
+  "releaseAssetsPublished": false,
+  "storeSubmitted": false,
+  "storeUrl": null,
+  "extensionId": null,
+  "edgeRuntimeTested": false,
+  "status": "preparing_not_submitted",
+  "blockers": [
+    "Microsoft Partner Center is at the personal Microsoft account sign-in page; account selection is pending."
+  ]
+}

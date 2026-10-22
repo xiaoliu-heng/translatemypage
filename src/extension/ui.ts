@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, Model, Settings, Status } from '../shared/protocol';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-$('installCommand').textContent = `node scripts/install-host.mjs --extension-id=${chrome.runtime.id}`;
+const nativeBrowser = /\bEdg\//.test(navigator.userAgent) ? 'edge' : 'chrome';
+$('installCommand').textContent = `node scripts/install-host.mjs --browser=${nativeBrowser} --extension-id=${chrome.runtime.id}`;
 let status: Status | undefined, settings: Settings = DEFAULT_SETTINGS;
 let models: Model[] = [], modelsAccount = '', loadingModels = false;
 let pendingAction = '';

@@ -6,11 +6,14 @@ import { spawnSync } from 'node:child_process';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-const publication = JSON.parse(await readFile(join(root, 'store/publication-status.json'), 'utf8'));
 const arg = name => process.argv.find(v => v.startsWith(`--${name}=`))?.slice(name.length + 3);
+const browser = arg('browser') || 'chrome';
+if (!['chrome', 'edge'].includes(browser)) throw new Error('Supported store targets: chrome, edge.');
+const publication = JSON.parse(await readFile(join(root, browser === 'edge' ? 'store/edge/publication-status.json' : 'store/publication-status.json'), 'utf8'));
 const extensionId = arg('extension-id');
-if (extensionId && !/^[a-p]{32}$/.test(extensionId)) throw new Error('Invalid Chrome Web Store extension ID.');
-const out = join(root, 'release', version), stage = join(root, 'dist/release-stage');
+if (extensionId && !/^[a-p]{32}$/.test(extensionId)) throw new Error('Invalid store extension ID.');
+const out = join(root, 'release', version, ...(browser === 'edge' ? ['edge'] : []));
+const stage = join(root, `dist/release-stage${browser === 'edge' ? '-edge' : ''}`);
 await rm(stage, { recursive: true, force: true }); await mkdir(stage, { recursive: true }); await mkdir(out, { recursive: true });
 async function copy(from, to) { await mkdir(dirname(to), { recursive: true }); await cp(from, to, { recursive: true }); }
 async function files(dir) {
@@ -31,13 +34,14 @@ async function zip(name, dir) {
   return { file: relative(root, path), bytes: (await stat(path)).size, sha256: createHash('sha256').update(await readFile(path)).digest('hex') };
 }
 
-const extension = join(stage, 'chrome'); await mkdir(extension);
+const extension = join(stage, browser); await mkdir(extension);
 // Deliberate allowlist: never package the workspace, native credentials, recordings or browser profiles.
 for (const name of ['background.js', 'content.js', 'ui.js', 'popup.html', 'options.html', 'ui.css', 'content.css', 'privacy.html', 'icons', '_locales']) {
   await copy(join(root, 'dist/extension', name), join(extension, name));
 }
 const manifest = JSON.parse(await readFile(join(root, 'dist/extension/manifest.json'), 'utf8'));
 delete manifest.key; // The store owns the distributed extension identity; keep the development key local.
+delete manifest.update_url;
 await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 for (const name of ['background.js', 'content.js', 'ui.js']) await stripMap(join(extension, name));
 
@@ -52,7 +56,7 @@ const helper = join(stage, 'helper'); await mkdir(helper);
 await copy(join(root, 'dist/host/host.cjs'), join(helper, 'dist/host/host.cjs')); await stripMap(join(helper, 'dist/host/host.cjs'));
 await writeFile(join(helper, 'dist/host/config.json'), JSON.stringify({ extensionId: extensionId || null }, null, 2) + '\n');
 for (const name of ['scripts/install-host.mjs', 'native/keychain.swift', 'LICENSE']) await copy(join(root, name), join(helper, name));
-await copy(join(root, 'store/helper-README.txt'), join(helper, 'README.txt'));
+await copy(join(root, browser === 'edge' ? 'store/edge/helper-README.txt' : 'store/helper-README.txt'), join(helper, 'README.txt'));
 await copy(join(root, 'store/privacy-policy.html'), join(helper, 'privacy-policy.html'));
 await writeFile(join(helper, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n\n----------------------------------------\n\n'));
 
@@ -61,7 +65,11 @@ for (const name of ['src', 'native', 'tests', 'assets', 'store', 'docs', 'packag
   await copy(join(root, name), join(source, name));
 }
 for (const name of ['build.mjs', 'install-host.mjs', 'package-store.mjs', 'store-assets.py', 'browser-smoke.mjs']) await copy(join(root, 'scripts', name), join(source, 'scripts', name));
-const materials = join(stage, 'store-materials'); await copy(join(root, 'store'), materials);
+const materials = join(stage, 'store-materials');
+if (browser === 'edge') {
+  await copy(join(root, 'store/edge'), materials);
+  for (const name of ['assets', 'screenshots', 'privacy-disclosure.json', 'privacy-policy.html']) await copy(join(root, 'store', name), join(materials, name));
+} else await copy(join(root, 'store'), materials);
 for (const dir of [extension, helper, source, materials]) {
   for (const path of await files(dir)) {
     const rel = relative(dir, path);
@@ -73,14 +81,14 @@ for (const dir of [extension, helper, source, materials]) {
   }
 }
 const archives = [];
-for (const [name, dir] of [['chrome', extension], ['helper', helper], ['source', source], ['store-materials', materials]]) archives.push(await zip(name, dir));
-const state = { version, publisher: 'xiaoliu-heng', supportEmail: 'xiaoliublog@gmail.com', extensionId: extensionId || null,
+for (const [name, dir] of [[browser, extension], [browser === 'edge' ? 'edge-helper' : 'helper', helper], ['source', source], [browser === 'edge' ? 'edge-store-materials' : 'store-materials', materials]]) archives.push(await zip(name, dir));
+const state = { version, browser, publisher: 'xiaoliu-heng', supportEmail: 'xiaoliublog@gmail.com', extensionId: extensionId || null,
   status: 'prepared_not_submitted', publication, archives,
   pending: [
     ...(!publication.sourcePublished ? ['Publish audited source code and MIT license to the public repository'] : []),
     ...(!publication.privacyPolicyPublished ? ['Publish privacy policy and verify its public URL'] : []),
     ...(!publication.releaseAssetsPublished ? ['Publish the local helper and source release assets'] : []),
-    'Chrome Web Store developer account access and submission',
+    `${browser === 'edge' ? 'Microsoft Edge Add-ons' : 'Chrome Web Store'} developer account access and submission`,
     ...(!extensionId ? ['Store-assigned extension ID; install helper with --extension-id or regenerate this archive after ID assignment'] : [])
   ] };
 await writeFile(join(out, 'release-status.json'), JSON.stringify(state, null, 2) + '\n');

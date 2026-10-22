@@ -1,6 +1,6 @@
 {
   "name": "translatemypage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,7 +14,8 @@
     "check": "npm run typecheck && npm test && npm run build",
     "install:host": "node scripts/install-host.mjs",
     "uninstall:host": "node scripts/install-host.mjs --uninstall",
-    "package:store": "npm run build && node scripts/package-store.mjs"
+    "package:store": "npm run build && node scripts/package-store.mjs",
+    "package:edge": "npm run build && node scripts/package-store.mjs --browser=edge"
   },
   "dependencies": {
     "jose": "^6.1.0",

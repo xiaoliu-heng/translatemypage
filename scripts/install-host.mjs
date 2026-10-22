@@ -22,8 +22,9 @@ const extensionIdArg = args.find(a => a.startsWith('--extension-id='));
 const extensionId = extensionIdArg === undefined
   ? JSON.parse(await readFile(join(hostDist, 'config.json'), 'utf8')).extensionId
   : extensionIdArg.slice('--extension-id='.length);
-if (!/^[a-p]{32}$/.test(extensionId || '')) throw new Error('请提供 Chrome 商店条目的扩展 ID：--extension-id=32位小写ID。可以从商店网址末尾或扩展详情页复制。');
-const runtime = join(process.platform === 'darwin' ? join(homedir(), 'Library/Application Support') : process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'TranslateMyPage', 'runtime');
+if (!/^[a-p]{32}$/.test(extensionId || '')) throw new Error('请提供扩展商店条目的扩展 ID：--extension-id=32位小写ID。可以从商店网址末尾或扩展详情页复制。');
+// Each browser keeps its own origin check; installing Edge must not replace Chrome's config.
+const runtime = join(process.platform === 'darwin' ? join(homedir(), 'Library/Application Support') : process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'TranslateMyPage', 'runtime', browser);
 if (args.includes('--dry-run')) {
   console.log(JSON.stringify({ browser, registration, runtime, config: { extensionId }, allowed_origins: [`chrome-extension://${extensionId}/`] }, null, 2));
   process.exit(0);
