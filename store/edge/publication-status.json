@@ -1,7 +1,7 @@
 {
   "checkedOn": "2026-10-22",
   "browser": "edge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "xiaoliu-heng",
   "supportEmail": "xiaoliublog@gmail.com",
   "pricing": "free",
@@ -16,16 +16,16 @@
   "status": "local_development_pending_end_to_end_verification",
   "validation": {
     "typecheck": "passed",
-    "offlineTests": 51,
+    "offlineTests": 57,
     "build": "passed",
-    "installedExtensionOAuth": "pending",
+    "installedExtensionOAuth": "user_reported_failure_pending_specific_diagnostic",
     "realTranslation": "pending",
     "currentVersionScreenshots": "pending",
     "zipAudit": "passed"
   },
   "previousReleaseUrl": "https://github.com/xiaoliu-heng/translatemypage/releases/tag/v0.1.1",
   "blockers": [
-    "Installed-extension manual callback exchange and real translation must be verified.",
+    "User reported authentication failure after pasting callback. Version 0.2.1 adds safe stage-specific errors; real end-to-end verification is still pending.",
     "Capture current-version screenshots before submission.",
     "Verify developer dashboard access and complete the store submission."
   ]

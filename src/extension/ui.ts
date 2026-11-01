@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, Model, Settings, Status } from '../shared/protocol';
+import { AppError, DEFAULT_SETTINGS, Model, Settings, Status } from '../shared/protocol';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const mode = document.body.dataset.mode;
 let session: import('./session').SessionRuntime | undefined;
@@ -9,15 +9,15 @@ const identityLabels = { signed_out: '未登录', authorizing: '授权中', sign
 const planLabels = { not_granted: '未授予套餐权限', authorized_unverified: '已授权 · 待首次翻译验证', last_request_succeeded: '最近调用成功', limited: '套餐调用受限', ineligible: '账号暂不符合条件', temporarily_unavailable: '套餐暂时不可用' };
 async function rpc(type: string, data: any = {}): Promise<any> {
   const response = await chrome.runtime.sendMessage({ type, ...data });
-  if (response?.error) { if (response.connection) renderConnection(response.connection); throw new Error(response.error.message); }
-  if (response?.result?.error) throw new Error(response.result.error.message);
+  if (response?.error) { if (response.connection) renderConnection(response.connection); throw new AppError(response.error.code, response.error.message); }
+  if (response?.result?.error) throw new AppError(response.result.error.code, response.result.error.message);
   return response?.result;
 }
 function feedback(text: string): void { $('feedback').textContent = text; }
 function click(id: string, action: () => Promise<any> | void): void {
   $(id).onclick = async () => {
     const button = $<HTMLButtonElement>(id); button.disabled = true; feedback('');
-    try { await action(); } catch (e) { feedback(e instanceof Error ? e.message : '操作失败。'); }
+    try { await action(); } catch (e) { feedback(e instanceof AppError ? `${e.message} [${e.code}]` : e instanceof Error ? e.message : '操作失败。'); }
     finally { button.disabled = false; renderStatus(); }
   };
 }

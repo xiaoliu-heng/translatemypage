@@ -4,7 +4,7 @@
 
 翻译网页和选中文字，保留原文对照、字体、链接和段落格式。可使用自己已授权的 **ChatGPT 订阅额度**，无需另填 OpenAI API 密钥。免费开源，采用 [MIT 许可证](LICENSE)。维护者：xiaoliu-heng；支持邮箱：xiaoliublog@gmail.com。
 
-> 当前源码为 **0.2.0 免助手开发版**，尚未上架 Chrome / Edge 商店。手动回调登录已实现并通过离线测试，仍需在已安装扩展中完成真实授权、令牌兑换和翻译验证。已有 v0.1.x Releases 属于旧架构，需要助手；不要混用旧安装包。
+> 当前源码为 **0.2.1 免助手开发版**，尚未上架 Chrome / Edge 商店。手动回调登录已实现并通过离线测试，仍需在已安装扩展中完成真实授权、令牌兑换和翻译验证。已有 v0.1.x Releases 属于旧架构，需要助手；不要混用旧安装包。
 
 ## 功能
 
@@ -33,6 +33,19 @@ npm run build
 5. 选择可用模型与目标语言，确认套餐说明。保留会话标签页，切回普通网页，从工具栏扩展按钮开启翻译；首次会说明发送给 OpenAI 的内容。
 
 登录请求与令牌兑换使用完全相同的回调地址。每次登录都有独立 state、nonce 和 PKCE verifier；回调只消费一次，5 分钟后失效。只接受本次 `127.0.0.1:1455/auth/callback` 地址，拒绝其他端口、路径、账号注册和重复参数。
+
+### 粘贴后认证失败
+
+0.2.1 起会显示具体错误码，区分回调校验、授权码兑换、签名密钥读取、身份验证和本地存储失败。排查时只提供错误文字及方括号内的错误码，不要提供回调地址、授权码或令牌。
+
+- `auth_exchange_network` / `auth_exchange_timeout`：未获得授权接口响应，检查网络和扩展的 OpenAI 网站访问权限。
+- `reauth_required`：授权码或会话已失效，重新开始授权，不能重复使用旧回调。
+- `identity_keys_network` / `identity_keys_timeout` / `identity_keys_http`：无法取得身份签名密钥或请求被拒绝，检查网络、网站访问权限和拦截情况。
+- `identity_nonce_mismatch` / `identity_audience_mismatch`：身份凭据与本次登录或客户端注册不匹配，重新开始授权；不要关闭身份校验来绕过问题。
+- `identity_expired`：检查系统时间后重新授权。
+- `auth_registration_failed` / `auth_account_failed`：检查扩展的本地存储是否可写。
+
+更新扩展后请关闭旧会话页，再打开新会话并重新授权。真实端到端登录故障尚待用户回传具体错误确认，离线测试不能代替这一步。
 
 ### 为什么要保留会话标签页
 
@@ -72,7 +85,7 @@ npm run package:store  # Chrome 扩展、源码、上架材料及校验和
 npm run package:edge   # Edge 扩展、源码、上架材料及校验和
 ```
 
-输出位于 `release/0.2.0/` 和 `release/0.2.0/edge/`。不再生成 helper ZIP。发布包使用明确的文件允许列表，不包含个人账号、凭据、缓存、录制资料或浏览器配置。商店扩展包移除开发公钥和 source map，包含 MIT 及第三方许可证。`extension-public-key.json` 仅为固定开发版 ID 的公钥，不含私钥。
+输出位于 `release/0.2.1/` 和 `release/0.2.1/edge/`。不再生成 helper ZIP。发布包使用明确的文件允许列表，不包含个人账号、凭据、缓存、录制资料或浏览器配置。商店扩展包移除开发公钥和 source map，包含 MIT 及第三方许可证。`extension-public-key.json` 仅为固定开发版 ID 的公钥，不含私钥。
 
 ```text
 src/extension/          网页提取、格式还原、小球、后台、会话页与设置

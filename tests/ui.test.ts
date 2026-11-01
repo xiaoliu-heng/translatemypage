@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { DEFAULT_SETTINGS } from '../src/shared/protocol';
 import { until } from './helpers';
 
-async function fixture(mode: 'popup' | 'session') {
+async function fixture(mode: 'popup' | 'session', failure?: { code: string; message: string }) {
   const html = (await readFile('src/extension/popup.html', 'utf8')).replace('data-mode="popup"', `data-mode="${mode}"`);
   const calls: any[] = [];
   const state: any = { accounts: [], accountEpoch: 1, authorizing: false };
@@ -17,7 +17,7 @@ async function fixture(mode: 'popup' | 'session') {
     } }] });
   const dom = new JSDOM(html, { url: 'https://extension-unit.invalid/', runScripts: 'outside-only' });
   (dom.window as any).chrome = { runtime: { onMessage: { addListener() {} }, openOptionsPage: async () => {},
-    sendMessage: async (message: any) => { calls.push(message); return { result: message.type === 'ui.state' ? { connection: 'ready', status: state, settings: structuredClone(DEFAULT_SETTINGS) } : {} }; } } };
+    sendMessage: async (message: any) => { calls.push(message); if (failure && message.type !== 'ui.state') return { error: failure }; return { result: message.type === 'ui.state' ? { connection: 'ready', status: state, settings: structuredClone(DEFAULT_SETTINGS) } : {} }; } } };
   dom.window.eval(result.outputFiles[0].text);
   await until(() => dom.window.document.getElementById('connection')!.textContent === '翻译会话已连接');
   return { dom, calls, state };
@@ -47,5 +47,14 @@ test('manual callback input is masked and cleared before the local session handl
     assert.equal((f.dom.window as any).clearedDuringSubmit, ''); assert.equal(input.value, '');
     assert(!JSON.stringify(f.calls).includes('sensitive-unit-code'));
     assert(!f.dom.window.document.getElementById('feedback')!.textContent!.includes('sensitive-unit-code'));
+  } finally { f.dom.window.close(); }
+});
+
+test('UI preserves a safe authentication error code returned through the background RPC', async () => {
+  const f = await fixture('popup', { code: 'auth_exchange_network', message: '无法连接 OpenAI 授权接口。' });
+  try {
+    (f.dom.window.document.getElementById('signIn') as HTMLButtonElement).click();
+    await until(() => f.dom.window.document.getElementById('feedback')!.textContent!.includes('[auth_exchange_network]'));
+    assert.equal(f.dom.window.document.getElementById('feedback')!.textContent, '无法连接 OpenAI 授权接口。 [auth_exchange_network]');
   } finally { f.dom.window.close(); }
 });

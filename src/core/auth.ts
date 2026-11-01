@@ -1,18 +1,13 @@
-import { createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
 import { Account, AppError, assert, PlanState, Status } from '../shared/protocol';
 import { consumeCallback, PendingAuthorization, CallbackError } from './callback';
 import { digest, RegistrationStore } from './storage';
+import { verifyIdentity } from './identity';
+export { verifyIdentity } from './identity';
 
 export const ISSUER = 'https://auth.openai.com';
 export const RESOURCE = 'https://api.openai.com/v1';
 export const SCOPES = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
 export const REDIRECT_URI = 'http://127.0.0.1:1455/auth/callback';
-const jwks = createRemoteJWKSet(new URL(`${ISSUER}/.well-known/jwks.json`));
-export async function verifyIdentity(idToken: string, clientId: string, nonce?: string): Promise<JWTPayload> {
-  const { payload } = await jwtVerify(idToken, jwks, { issuer: ISSUER, audience: clientId, requiredClaims: ['sub', 'exp', 'iat'], algorithms: ['RS256'] });
-  assert(payload.sub && (nonce === undefined || payload.nonce === nonce), 'invalid_identity', '登录身份校验失败，请重新登录。');
-  return payload;
-}
 export interface Credential {
   clientId: string; accessToken: string; refreshToken?: string; idToken?: string;
   scopes: string[]; expiresAt: number;
@@ -107,18 +102,22 @@ export class AuthManager {
     }
     assert(attempt, 'no_pending_authorization', '请先开始登录。');
     this.changed(false);
+    let stage: 'registration' | 'exchange' | 'identity' | 'account' = 'registration';
     const work = (async () => {
       try {
         // Preserve an issued registration even if the one-time code exchange fails.
         if (!this.registrations.data.bindings[callback.clientId]) this.registrations.data.pendingClientId = callback.clientId;
         await this.registrations.save();
         attempt.abort.signal.throwIfAborted();
+        stage = 'exchange';
         const response = await this.token({ grant_type: 'authorization_code', client_id: callback.clientId, code: callback.code,
           code_verifier: attempt.verifier, redirect_uri: attempt.redirectUri, resource: RESOURCE }, attempt.abort.signal);
         const credential = credentialsFromResponse(response, callback.clientId);
         assert(credential.idToken, 'invalid_identity', '授权服务未返回身份令牌。');
+        stage = 'identity';
         const identity = await this.deps.verify(credential.idToken, callback.clientId, attempt.nonce);
         assert(identity.sub && identity.iss === ISSUER, 'invalid_identity', '登录身份校验失败。');
+        stage = 'account';
         const subjectHash = await digest([identity.iss, identity.sub]);
         const bound = this.registrations.data.bindings[callback.clientId];
         assert(!bound || bound === subjectHash, 'account_mismatch', '返回的身份与已有注册不一致，请选择原账号或添加其他账号。');
@@ -136,8 +135,10 @@ export class AuthManager {
         this.activeKey = key; this.epoch++; this.notice = undefined;
         this.finish(attempt); this.changed(true);
       } catch (e) {
-        this.notice = e instanceof AppError ? e.message : '登录验证未完成，请重新授权。'; this.finish(attempt); this.changed(false);
-        throw e instanceof AppError ? e : new AppError('auth_failed', this.notice);
+        const messages = { registration: '无法保存客户端注册，请检查扩展的本地存储空间后重新授权。',
+          exchange: '授权码兑换未完成，请重新开始授权。', identity: '身份凭据验证未完成，请重新授权。', account: '无法完成账号绑定或保存，请检查扩展的本地存储后重新授权。' };
+        const error = e instanceof AppError ? e : new AppError(`auth_${stage}_failed`, messages[stage]);
+        this.notice = `${error.message} [${error.code}]`; this.finish(attempt); this.changed(false); throw error;
       }
     })();
     this.processing = work;
@@ -157,15 +158,26 @@ export class AuthManager {
     const account = this.find(key); account.plan = plan; if (reauth) account.identity = 'reauth_required'; this.changed(false);
   }
   private async token(fields: Record<string, string>, signal?: AbortSignal): Promise<any> {
-    const response = await this.deps.fetch(`${ISSUER}/api/accounts/oauth/token`, { method: 'POST', credentials: 'omit', redirect: 'error',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000) });
-    const data = await response.json() as any;
-    if (!response.ok) {
-      const code = typeof data.error === 'string' ? data.error : data.error?.code;
-      throw new AppError(code === 'invalid_grant' ? 'reauth_required' : 'auth_unavailable',
-        code === 'invalid_grant' ? '授权码或会话已失效，请重新授权。' : '授权服务暂时不可用，请稍后重试。', response.status);
+    const timeout = AbortSignal.timeout(20_000);
+    let response: Response;
+    try {
+      response = await this.deps.fetch(`${ISSUER}/api/accounts/oauth/token`, { method: 'POST', credentials: 'omit', redirect: 'error',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields),
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    } catch {
+      if (signal?.aborted) throw new AppError('cancelled', '登录已取消。');
+      throw new AppError(timeout.aborted ? 'auth_exchange_timeout' : 'auth_exchange_network', timeout.aborted
+        ? '连接 OpenAI 授权接口超时，请检查网络后重新授权。'
+        : '无法连接 OpenAI 授权接口，请检查网络及扩展的 OpenAI 网站访问权限，然后重新授权。');
     }
+    const data = await response.json().catch(() => undefined) as any;
+    if (!response.ok) {
+      const code = typeof data?.error === 'string' ? data.error : data?.error?.code;
+      if (code === 'invalid_client') throw new AppError('auth_invalid_client', 'OpenAI 未接受此客户端注册，需要检查注册配置。', response.status);
+      throw new AppError(code === 'invalid_grant' ? 'reauth_required' : 'auth_unavailable',
+        code === 'invalid_grant' ? '授权码或会话已失效，请重新授权；旧回调链接不能再次使用。' : `OpenAI 授权接口返回 HTTP ${response.status}，请稍后重新授权。`, response.status);
+    }
+    assert(data && typeof data === 'object' && !Array.isArray(data), 'auth_exchange_response', 'OpenAI 授权接口未返回有效 JSON，请检查网络是否返回了拦截页面。');
     return data;
   }
   async access(key: string): Promise<Credential> {

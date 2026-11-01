@@ -152,6 +152,32 @@ test('a second pasted callback cannot invalidate the code exchange already in pr
 test('library exceptions never expose credential-bearing diagnostics in the session UI', async t => {
   const f = fixture(t, { fetch: (async () => { throw new Error('raw-private-authorization-data'); }) as typeof fetch });
   await f.auth.begin();
-  await assert.rejects(f.auth.complete(f.callback()), (error: any) => error.code === 'auth_failed' && !error.message.includes('raw-private'));
+  await assert.rejects(f.auth.complete(f.callback()), (error: any) => error.code === 'auth_exchange_network' && !error.message.includes('raw-private'));
   assert(!JSON.stringify(f.auth.status()).includes('raw-private'));
+});
+
+test('token exchange failures retain safe status and stage diagnostics rather than a generic authentication failure', async t => {
+  const cases: [string, () => Response | Promise<Response>][] = [
+    ['auth_exchange_network', () => { throw new TypeError('private-code-and-verifier'); }],
+    ['auth_unavailable', () => new Response('<html>private-code-and-verifier</html>', { status: 403 })],
+    ['auth_exchange_response', () => new Response('<html>private-code-and-verifier</html>')],
+    ['auth_exchange_response', () => Response.json(null)],
+    ['auth_invalid_client', () => Response.json({ error: 'invalid_client', error_description: 'private-code-and-verifier' }, { status: 401 })],
+  ];
+  for (const [code, response] of cases) {
+    const f = fixture(t, { fetch: (async () => response()) as typeof fetch });
+    await f.auth.begin(); await assert.rejects(f.auth.complete(f.callback()), (error: any) => error.code === code && !error.message.includes('private-'));
+    assert(f.auth.status().notice!.includes(`[${code}]`)); assert(!f.auth.status().notice!.includes('private-'));
+    assert.equal(f.auth.status().authorizing, false); assert.equal(f.auth.active(), undefined);
+    assert.equal(f.store.data.pendingClientId, 'oaiapp_issued');
+  }
+});
+
+test('registration storage errors are identified before sending a one-time code to the provider', async t => {
+  const store: RegistrationStore = { data: newRegistration(), save: async () => { throw new Error('private-storage-detail'); } };
+  let requests = 0;
+  const f = fixture(t, { fetch: (async () => { requests++; return Response.json(tokens()); }) as typeof fetch }, store);
+  await f.auth.begin();
+  await assert.rejects(f.auth.complete(f.callback()), (error: any) => error.code === 'auth_registration_failed' && !error.message.includes('private-'));
+  assert.equal(requests, 0); assert(f.auth.status().notice!.includes('auth_registration_failed'));
 });

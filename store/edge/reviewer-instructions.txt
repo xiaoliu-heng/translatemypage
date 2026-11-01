@@ -1,4 +1,4 @@
-TranslateMyPage 0.2.0 — review instructions (draft; not submitted)
+TranslateMyPage 0.2.1 — review instructions (draft; not submitted)
 
 Single purpose: AI webpage bilingual and selected-text translation.
 Free, MIT-licensed source: https://github.com/xiaoliu-heng/translatemypage

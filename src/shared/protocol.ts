@@ -1,6 +1,6 @@
 import { validSourceFormat } from './formatting';
 export const PROTOCOL = 1;
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 export const MAX_FRAME = 128 * 1024;
 export const MAX_BATCH_CHARS = 12_000;
 export const MAX_SEGMENTS = 8;
