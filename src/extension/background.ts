@@ -15,7 +15,9 @@ const bridge = new SessionBridge(onSessionEvent, () => {
 chrome.runtime.onConnect.addListener(port => bridge.attach(port));
 function pageStatus() {
   return bridge.status && { ...bridge.status, transportId, notice: undefined, authorization: undefined,
-    accounts: bridge.status.accounts.map(account => ({ ...account, name: '', email: '', subject: '', issuer: '', clientId: '' })) };
+    accounts: bridge.status.accounts.map(account => account.authType === 'chatgpt'
+      ? { ...account, name: '', email: '', subject: '', issuer: '', clientId: '' }
+      : { ...account, name: '' }) };
 }
 async function openSession(): Promise<void> {
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB], documentUrls: [chrome.runtime.getURL('session.html')] });
@@ -80,7 +82,7 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
       case 'page.translate': {
         await bridge.connect();
         const s = await settings(); const a = bridge.status?.accounts.find(x => x.key === bridge.status?.activeKey);
-        assert(a && a.identity === 'signed_in', 'signed_out', '请先在扩展中登录 ChatGPT。');
+        assert(a && a.identity === 'signed_in', 'signed_out', '请先在扩展中登录 ChatGPT 或设置 OpenAI API key。');
         const model = s.models[a.key]; assert(model, 'model_required', '请先在扩展中选择模型。');
         assert(message.accountEpoch === bridge.status!.accountEpoch && Number.isSafeInteger(message.generation), 'stale_account', '账号或页面设置已变化。');
         const hostname = new URL(sender.url!).hostname;
@@ -115,10 +117,14 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
       const epoch = bridge.status?.accountEpoch;
       const models: Model[] = await bridge.call('models.list');
       assert(epoch === undefined || epoch === bridge.status?.accountEpoch, 'stale_account', '账号已切换。');
-      const key = bridge.status?.activeKey;
-      if (key && models.length) {
-        const s = await settings();
-        if (!models.some(m => m.slug === s.models[key])) { s.models[key] = models[0].slug; await chrome.storage.local.set({ settings: s }); }
+      const account = bridge.status?.accounts.find(a => a.key === bridge.status?.activeKey);
+      if (account) {
+        const s = await settings(), selected = s.models[account.key];
+        if (!models.some(m => m.slug === selected) && (account.authType === 'chatgpt' ? models.length > 0 : !!selected)) {
+          if (account.authType === 'chatgpt') s.models[account.key] = models[0].slug;
+          else delete s.models[account.key];
+          await chrome.storage.local.set({ settings: s });
+        }
       }
       return models;
     }

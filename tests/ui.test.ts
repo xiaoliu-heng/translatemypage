@@ -3,58 +3,250 @@ import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
-import { DEFAULT_SETTINGS } from '../src/shared/protocol';
-import { until } from './helpers';
+import { Account, DEFAULT_SETTINGS, Model, Settings, Status } from '../src/shared/protocol';
+import { deferred, until } from './helpers';
 
-async function fixture(mode: 'popup' | 'session', failure?: { code: string; message: string }) {
+type UiMessage = { type: string; accountKey?: string; settings?: Partial<Settings>; [key: string]: unknown };
+interface FixtureOptions {
+  failure?: { code: string; message: string };
+  accounts?: Account[];
+  settings?: Partial<Settings>;
+  catalogs?: Record<string, Model[]>;
+  apiGate?: Promise<void>;
+  settingsGate?: Promise<void>;
+  apiFailure?: Error;
+  readModels?: (accountKey: string) => Promise<Model[]>;
+}
+const apiAccount = (key = 'api-sha256-public-id-12345678'): Account => ({ key, authType: 'api_key', name: 'OpenAI API key', identity: 'signed_in', plan: 'authorized_unverified' });
+const chatAccount = (): Account => ({ key: 'chat-account', authType: 'chatgpt', name: 'Reader', email: 'reader@example.invalid', clientId: 'chat-client-654321', subject: 'reader', issuer: 'https://auth.openai.com', identity: 'signed_in', plan: 'authorized_unverified' });
+
+async function fixture(mode: 'popup' | 'session' | 'options', options: FixtureOptions = {}) {
   const html = (await readFile('src/extension/popup.html', 'utf8')).replace('data-mode="popup"', `data-mode="${mode}"`);
-  const calls: any[] = [];
-  const state: any = { accounts: [], accountEpoch: 1, authorizing: false };
+  const calls: UiMessage[] = [];
+  const state: Status = { accounts: options.accounts || [], activeKey: options.accounts?.[0]?.key, accountEpoch: 1, authorizing: false };
+  let settings: Settings = { ...structuredClone(DEFAULT_SETTINGS), ...options.settings };
+  let listener: ((message: { type: string; status: Status; connection: string }) => boolean) | undefined;
+  let callbackCleared = '', callbackCalls = 0, apiCleared = '', apiCalls = 0;
   const result = await build({ entryPoints: ['src/extension/ui.ts'], bundle: true, platform: 'browser', format: 'iife', write: false,
     plugins: [{ name: 'mock-session-runtime', setup(builder) {
       builder.onResolve({ filter: /^\.\/session$/ }, () => ({ path: 'runtime', namespace: 'fixture' }));
-      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export async function startSession(){return {complete: async raw => {window.completed=raw;window.clearedDuringSubmit=document.getElementById("callbackUrl").value;},close(){}};}' }));
+      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: 'export async function startSession(){return window.sessionFixture;}' }));
     } }] });
   const dom = new JSDOM(html, { url: 'https://extension-unit.invalid/', runScripts: 'outside-only' });
-  (dom.window as any).chrome = { runtime: { onMessage: { addListener() {} }, openOptionsPage: async () => {},
-    sendMessage: async (message: any) => { calls.push(message); if (failure && message.type !== 'ui.state') return { error: failure }; return { result: message.type === 'ui.state' ? { connection: 'ready', status: state, settings: structuredClone(DEFAULT_SETTINGS) } : {} }; } } };
+  const document = dom.window.document;
+  const element = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+  const emit = () => listener?.({ type: 'state.changed', status: structuredClone(state), connection: 'ready' });
+  Object.assign(dom.window.HTMLDialogElement.prototype, {
+    showModal(this: HTMLDialogElement) { this.setAttribute('open', ''); },
+    close(this: HTMLDialogElement) { this.removeAttribute('open'); },
+  });
+  Object.assign(dom.window, {
+    sessionFixture: {
+      async complete() { callbackCalls++; callbackCleared = element<HTMLInputElement>('callbackUrl').value; },
+      async useApiKey() {
+        apiCalls++; apiCleared = element<HTMLInputElement>('apiKey').value;
+        await options.apiGate;
+        if (options.apiFailure) throw options.apiFailure;
+        const account = apiAccount();
+        if (!state.accounts.some(a => a.key === account.key)) state.accounts.push(account);
+        state.activeKey = account.key; state.accountEpoch++; emit();
+      },
+      close() {},
+    },
+    chrome: { runtime: { onMessage: { addListener(callback: typeof listener) { listener = callback; } }, openOptionsPage: async () => {},
+      sendMessage: async (message: UiMessage) => {
+        calls.push(message);
+        if (options.failure && message.type !== 'ui.state') return { error: options.failure };
+        if (message.type === 'ui.state') return { result: { connection: 'ready', status: structuredClone(state), settings: structuredClone(settings) } };
+        if (message.type === 'ui.models') return { result: options.readModels ? await options.readModels(state.activeKey || '') : options.catalogs?.[state.activeKey || ''] || [] };
+        if (message.type === 'ui.settings') { await options.settingsGate; settings = { ...settings, ...message.settings }; return { result: structuredClone(settings) }; }
+        if (message.type === 'ui.selectAccount') { state.activeKey = message.accountKey; state.accountEpoch++; emit(); }
+        return { result: {} };
+      },
+    } },
+  });
   dom.window.eval(result.outputFiles[0].text);
-  await until(() => dom.window.document.getElementById('connection')!.textContent === '翻译会话已连接');
-  return { dom, calls, state };
+  await until(() => element('connection').textContent === '翻译会话已连接');
+  return { dom, calls, state, element, emit, credentials: () => ({ callbackCleared, callbackCalls, apiCleared, apiCalls }), settings: () => settings };
 }
 
 test('popup sign-in opens the session tab; no native installation flow is shown', async () => {
   const f = await fixture('popup');
   try {
-    (f.dom.window.document.getElementById('signIn') as HTMLButtonElement).click();
-    await until(() => f.calls.some(call => call.type === 'ui.openSession') && !(f.dom.window.document.getElementById('signIn') as HTMLButtonElement).disabled);
+    f.element<HTMLButtonElement>('signIn').click();
+    await until(() => f.calls.some(call => call.type === 'ui.openSession') && !f.element<HTMLButtonElement>('signIn').disabled);
     assert(!f.calls.some(call => call.type === 'ui.auth'));
     assert.equal(f.dom.window.document.getElementById('installHelp'), null);
-    assert.equal(f.dom.window.document.getElementById('callbackStep')!.hidden, true);
+    assert.equal(f.element('callbackStep').hidden, true);
   } finally { f.dom.window.close(); }
 });
 
-test('manual callback input is masked and cleared before the local session handles it, without a callback RPC', async () => {
+test('manual callback input is masked and cleared before local completion without a callback RPC', async () => {
   const f = await fixture('session');
   try {
-    f.state.authorizing = true; f.state.authorization = { redirectUri: 'http://127.0.0.1:1455/auth/callback', expiresAt: Date.now() + 300_000, exchanging: false };
-    const input = f.dom.window.document.getElementById('callbackUrl') as HTMLInputElement;
+    f.state.authorizing = true; f.state.authorization = { redirectUri: 'http://127.0.0.1:1455/auth/callback', expiresAt: Date.now() + 300_000, exchanging: false }; f.emit();
+    const input = f.element<HTMLInputElement>('callbackUrl');
     input.value = 'http://127.0.0.1:1455/auth/callback?code=sensitive-unit-code';
     assert.equal(input.type, 'password');
-    const button = f.dom.window.document.getElementById('completeAuth') as HTMLButtonElement;
-    button.disabled = false; button.click();
-    await until(() => f.dom.window.document.getElementById('feedback')!.textContent!.includes('登录验证完成') && !button.disabled);
-    assert.equal((f.dom.window as any).clearedDuringSubmit, ''); assert.equal(input.value, '');
+    const button = f.element<HTMLButtonElement>('completeAuth'); button.click();
+    await until(() => f.element('feedback').textContent!.includes('登录验证完成') && !button.disabled);
+    assert.equal(f.credentials().callbackCalls, 1); assert.equal(f.credentials().callbackCleared, ''); assert.equal(input.value, '');
     assert(!JSON.stringify(f.calls).includes('sensitive-unit-code'));
-    assert(!f.dom.window.document.getElementById('feedback')!.textContent!.includes('sensitive-unit-code'));
+    assert(!f.element('feedback').textContent!.includes('sensitive-unit-code'));
   } finally { f.dom.window.close(); }
 });
 
 test('UI preserves a safe authentication error code returned through the background RPC', async () => {
-  const f = await fixture('popup', { code: 'auth_exchange_network', message: '无法连接 OpenAI 授权接口。' });
+  const f = await fixture('popup', { failure: { code: 'auth_exchange_network', message: '无法连接 OpenAI 授权接口。' } });
   try {
-    (f.dom.window.document.getElementById('signIn') as HTMLButtonElement).click();
-    await until(() => f.dom.window.document.getElementById('feedback')!.textContent!.includes('[auth_exchange_network]'));
-    assert.equal(f.dom.window.document.getElementById('feedback')!.textContent, '无法连接 OpenAI 授权接口。 [auth_exchange_network]');
+    f.element<HTMLButtonElement>('signIn').click();
+    await until(() => f.element('feedback').textContent!.includes('[auth_exchange_network]'));
   } finally { f.dom.window.close(); }
+});
+
+for (const mode of ['popup', 'options'] as const) test(`${mode} API-key entry opens the session without revealing or submitting the secret form`, async () => {
+  const f = await fixture(mode);
+  try {
+    f.element<HTMLButtonElement>('useApiKey').click();
+    await until(() => f.calls.some(call => call.type === 'ui.openSession') && !f.element<HTMLButtonElement>('useApiKey').disabled);
+    assert.equal(f.element('apiKeyForm').hidden, true);
+    f.element<HTMLInputElement>('apiKey').value = 'sk-ui-must-not-send';
+    f.element<HTMLButtonElement>('connectApiKey').click();
+    assert.equal(f.credentials().apiCalls, 0);
+    assert(!JSON.stringify(f.calls).includes('sk-ui-must-not-send'));
+  } finally { f.dom.window.close(); }
+});
+
+test('session API-key entry clears masked input before local handling and stays busy through state updates', async () => {
+  const gate = deferred<void>();
+  const f = await fixture('session', { apiGate: gate.promise });
+  try {
+    f.element<HTMLButtonElement>('useApiKey').click();
+    const input = f.element<HTMLInputElement>('apiKey');
+    assert.equal(f.element('apiKeyForm').hidden, false); assert.equal(f.dom.window.document.activeElement, input);
+    assert.equal(input.type, 'password'); assert.equal(input.autocomplete, 'off');
+    input.value = 'sk-ui-private-unit-secret';
+    input.dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await until(() => f.credentials().apiCalls === 1);
+    assert.equal(input.value, ''); assert.equal(f.credentials().apiCleared, '');
+    f.emit();
+    assert.equal(f.element<HTMLButtonElement>('connectApiKey').disabled, true);
+    assert.equal(f.element<HTMLButtonElement>('useApiKey').disabled, true);
+    assert.equal(input.disabled, true);
+    gate.resolve();
+    await until(() => f.element('apiKeyForm').hidden && !f.element<HTMLButtonElement>('connectApiKey').disabled);
+    assert.equal(f.element('apiKeyForm').hidden, true);
+    assert.equal(f.element('identity').textContent, '已设置');
+    assert(!JSON.stringify(f.calls).includes('sk-ui-private-unit-secret'));
+    assert(!f.dom.window.document.body.textContent!.includes('sk-ui-private-unit-secret'));
+  } finally { gate.resolve(); await until(() => !f.element<HTMLButtonElement>('connectApiKey').disabled); f.dom.window.close(); }
+});
+
+test('API-key dismiss and Escape erase unsubmitted credentials; local failures never echo secrets', async () => {
+  const f = await fixture('session', { apiFailure: new Error('sk-ui-secret-provider-body') });
+  try {
+    const input = f.element<HTMLInputElement>('apiKey');
+    f.element<HTMLButtonElement>('useApiKey').click(); input.value = 'sk-ui-dismissed';
+    f.element<HTMLButtonElement>('dismissApiKey').click();
+    assert.equal(input.value, ''); assert.equal(f.element('apiKeyForm').hidden, true);
+    await until(() => !f.element<HTMLButtonElement>('useApiKey').disabled);
+    f.element<HTMLButtonElement>('useApiKey').click(); input.value = 'sk-ui-escaped';
+    input.dispatchEvent(new f.dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(input.value, ''); assert.equal(f.element('apiKeyForm').hidden, true);
+    await until(() => !f.element<HTMLButtonElement>('useApiKey').disabled);
+    f.element<HTMLButtonElement>('useApiKey').click(); input.value = 'sk-ui-secret-provider-body';
+    f.element<HTMLButtonElement>('connectApiKey').click();
+    await until(() => f.element('feedback').textContent!.includes('无法设置 API key') && !f.element<HTMLButtonElement>('connectApiKey').disabled);
+    assert(!f.element('feedback').textContent!.includes('sk-ui-secret-provider-body'));
+    assert.equal(input.value, '');
+  } finally { f.dom.window.close(); }
+});
+
+test('API billing bypasses ChatGPT plan consent and requires an explicit persisted model choice', async () => {
+  const api = apiAccount();
+  const f = await fixture('popup', { accounts: [api], catalogs: { [api.key]: [{ slug: 'gpt-text-unit', displayName: 'gpt-text-unit' }, { slug: 'audio-unit', displayName: 'audio-unit' }] } });
+  try {
+    const model = f.element<HTMLSelectElement>('model');
+    await until(() => model.options.length === 3);
+    assert.equal(model.value, ''); assert.equal(f.settings().models[api.key], undefined);
+    assert.equal(f.element<HTMLButtonElement>('translate').disabled, true);
+    assert.equal(f.element<HTMLDialogElement>('planDialog').open, false);
+    assert.equal(f.element('billingMethod').textContent, 'OpenAI API 单独计费');
+    assert.equal(f.element<HTMLAnchorElement>('manageUsage').href, 'https://platform.openai.com/usage');
+    assert.equal(f.element('logout').textContent, '断开（仅本会话）');
+    assert.equal(f.element('accounts').textContent, 'OpenAI API key · 12345678');
+    model.value = 'gpt-text-unit'; model.dispatchEvent(new f.dom.window.Event('change'));
+    await until(() => !f.element<HTMLButtonElement>('translate').disabled);
+    assert.equal(f.settings().models[api.key], 'gpt-text-unit');
+    f.element<HTMLButtonElement>('refreshModels').click();
+    await until(() => !f.element<HTMLButtonElement>('refreshModels').disabled);
+    assert.equal(model.value, 'gpt-text-unit');
+    f.element<HTMLButtonElement>('translate').click();
+    await until(() => f.element<HTMLDialogElement>('sharingDialog').open);
+    assert(f.element('sharingBilling').textContent!.includes('按用量单独计费'));
+    assert.equal(f.element<HTMLDialogElement>('planDialog').open, false);
+  } finally { f.dom.window.close(); }
+});
+
+test('refreshing while a model selection is being saved preserves the user selection', async () => {
+  const api = apiAccount(), gate = deferred<void>();
+  const f = await fixture('popup', { accounts: [api], settingsGate: gate.promise, catalogs: { [api.key]: [{ slug: 'text-choice', displayName: 'Text choice' }] } });
+  try {
+    const model = f.element<HTMLSelectElement>('model');
+    await until(() => model.options.length === 2);
+    model.value = 'text-choice'; model.dispatchEvent(new f.dom.window.Event('change'));
+    f.emit();
+    assert.equal(model.value, 'text-choice');
+    f.element<HTMLButtonElement>('refreshModels').click();
+    await until(() => !f.element<HTMLButtonElement>('refreshModels').disabled);
+    assert.equal(model.value, 'text-choice'); assert.equal(f.settings().models[api.key], undefined);
+    gate.resolve();
+    await until(() => !f.element<HTMLButtonElement>('translate').disabled);
+    assert.equal(model.value, 'text-choice'); assert.equal(f.settings().models[api.key], 'text-choice');
+  } finally { gate.resolve(); f.dom.window.close(); }
+});
+
+test('switching connections keeps billing and model selections isolated and ChatGPT login never reuses an API account key', async () => {
+  const api = apiAccount(), chat = chatAccount();
+  const f = await fixture('session', {
+    accounts: [api, chat], settings: { models: { [api.key]: 'api-text-unit', [chat.key]: 'chat-text-unit' } },
+    catalogs: { [api.key]: [{ slug: 'api-text-unit', displayName: 'API text' }], [chat.key]: [{ slug: 'chat-text-unit', displayName: 'Chat text' }] },
+  });
+  try {
+    const model = f.element<HTMLSelectElement>('model'), accounts = f.element<HTMLSelectElement>('accounts');
+    await until(() => model.value === 'api-text-unit');
+    f.element<HTMLButtonElement>('signIn').click();
+    await until(() => f.calls.some(call => call.type === 'ui.auth') && !f.element<HTMLButtonElement>('signIn').disabled);
+    assert.equal(f.calls.find(call => call.type === 'ui.auth')?.accountKey, undefined);
+    accounts.value = chat.key; accounts.dispatchEvent(new f.dom.window.Event('change'));
+    await until(() => model.value === 'chat-text-unit');
+    assert.equal(f.element('billingMethod').textContent, '使用你的 ChatGPT 套餐');
+    assert.equal(f.element<HTMLDialogElement>('planDialog').open, true);
+    assert.equal(f.element<HTMLAnchorElement>('manageUsage').href, 'https://chatgpt.com/settings/usage');
+    accounts.value = api.key; accounts.dispatchEvent(new f.dom.window.Event('change'));
+    await until(() => model.value === 'api-text-unit');
+    assert.equal(f.element<HTMLDialogElement>('planDialog').open, false);
+    const active = f.state.accounts.find(a => a.key === api.key)!; active.identity = 'reauth_required'; f.emit();
+    assert.equal(f.element('identity').textContent, '请重新设置 API key');
+    f.element<HTMLButtonElement>('useApiKey').click();
+    assert.equal(f.element('apiKeyForm').hidden, false);
+    assert.equal(f.calls.filter(call => call.type === 'ui.auth').length, 1);
+    await until(() => !f.element<HTMLButtonElement>('useApiKey').disabled);
+  } finally { f.dom.window.close(); }
+});
+
+test('a slow old catalog cannot replace the models for a newly selected connection', async () => {
+  const first = apiAccount('api-first-11111111'), second = apiAccount('api-second-22222222');
+  const slow = deferred<Model[]>();
+  const f = await fixture('session', { accounts: [first, second], settings: { models: { [second.key]: 'second-text' } }, readModels: key => key === first.key ? slow.promise : Promise.resolve([{ slug: 'second-text', displayName: 'Second' }, { slug: 'second-choice', displayName: 'Second choice' }]) });
+  try {
+    const accounts = f.element<HTMLSelectElement>('accounts'), model = f.element<HTMLSelectElement>('model');
+    accounts.value = second.key; accounts.dispatchEvent(new f.dom.window.Event('change'));
+    await until(() => model.value === 'second-text');
+    slow.resolve([{ slug: 'first-text', displayName: 'First' }]);
+    model.value = 'second-choice'; model.dispatchEvent(new f.dom.window.Event('change'));
+    await until(() => f.settings().models[second.key] === 'second-choice');
+    assert.equal(model.value, 'second-choice'); assert(!model.textContent!.includes('First'));
+    assert.equal(f.element('accounts').textContent!.includes('22222222'), true);
+  } finally { slow.resolve([]); f.dom.window.close(); }
 });

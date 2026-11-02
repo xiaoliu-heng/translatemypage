@@ -9,10 +9,15 @@ export const USAGE_URL = 'https://chatgpt.com/settings/usage';
 
 export type IdentityState = 'signed_out' | 'authorizing' | 'signed_in' | 'reauth_required';
 export type PlanState = 'not_granted' | 'authorized_unverified' | 'last_request_succeeded' | 'limited' | 'ineligible' | 'temporarily_unavailable';
-export interface Account {
-  key: string; clientId: string; subject: string; issuer: string;
-  name: string; email: string; identity: IdentityState; plan: PlanState;
+export type AuthType = 'chatgpt' | 'api_key';
+interface AccountState {
+  key: string; name: string; identity: IdentityState; plan: PlanState;
 }
+export interface ChatGPTAccount extends AccountState {
+  authType: 'chatgpt'; clientId: string; subject: string; issuer: string; email: string;
+}
+export interface ApiKeyAccount extends AccountState { authType: 'api_key' }
+export type Account = ChatGPTAccount | ApiKeyAccount;
 export interface Status {
   accounts: Account[]; activeKey?: string; accountEpoch: number;
   transportId?: string;

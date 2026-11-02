@@ -1,9 +1,9 @@
 {
-  "singlePurpose": "在用户激活当前网页并同意发送内容后，使用其通过官方流程授权的 ChatGPT 套餐提供网页双语与划词翻译。",
+  "singlePurpose": "在用户激活当前网页并同意发送内容后，使用其授权的 ChatGPT 套餐或个人 OpenAI API key，通过 Responses API 提供网页双语与划词翻译。",
   "permissions": {
     "activeTab": "仅在用户点击扩展或触发当前页翻译后取得当前普通网页的临时访问权限，用于阅读正文和显示译文。",
     "scripting": "将随扩展打包的内容提取、排版与翻译小球代码注入用户主动激活的当前页，不下载或执行远程脚本。",
-    "storage": "Local preferences, random host ID, issued client IDs and hashed account bindings only. Translation cache uses extension IndexedDB. OAuth credentials remain only in session-page memory."
+    "storage": "Local preferences, random host ID, issued client IDs, hashed account bindings and one-way API connection digests only. Translation cache uses extension IndexedDB. OAuth credentials and API keys remain only in session-page memory."
   },
   "remoteCode": false,
   "remoteCodeExplanation": "All executable code is bundled. Model output is validated data rendered through safe local DOM nodes.",
@@ -15,7 +15,7 @@
   ],
   "dataTypeNotes": {
     "Personally identifiable information": "Name, email and raw subject remain in session memory for account selection; not persisted.",
-    "Authentication information": "Callback and PKCE are used for one authorization. OAuth tokens remain in session-page memory, sent only to OpenAI, and never written to browser storage or logs.",
+    "Authentication information": "Callback and PKCE are used for one authorization. OAuth tokens and personal OpenAI API keys remain in session-page memory, are sent only to OpenAI, and are never written to browser storage or logs. API keys never pass through background/page message routing; disconnect only forgets the local key, not its platform registration.",
     "Web history": "当前主动激活网页的地址仅本地处理，用于站点术语、临时权限和页面生命周期；不使用浏览历史 API，不建立历史档案，不将完整地址加入模型请求。采用保守披露。",
     "Website content": "用户发起翻译的正文、选中文字、页面标题、命中的术语及生成的译文。"
   },

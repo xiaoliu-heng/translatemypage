@@ -14,9 +14,15 @@ Install only the extension. There is no Native Messaging host, local HTTP listen
 7. Close the session tab: requests stop and local credentials are discarded. Restart the session and verify fresh authorization. Sign out explicitly to attempt remote revocation. A failed revocation is disclosed with a link to ChatGPT settings.
 8. Test simultaneous session pages, cancelled authorization, wrong/stale callbacks, account switching, quota limits and worker disconnection. Unknown inference results must not be automatically replayed.
 
-Only activeTab, scripting and storage are requested, with host access limited to auth.openai.com and api.openai.com. No browser-history API, broad website permission, remote executable code or developer inference proxy is used. Tokens are held only in the visible extension session page's memory. Nonsecret registration identifiers and preferences use chrome.storage.local; account-isolated translation cache uses IndexedDB.
+API-key route:
+1. In the session tab, choose "使用 OpenAI API key" and enter your own key. No shared developer key is provided. This configures an unverified session-only credential; model and translation requests validate its permissions.
+2. Explicitly select a Responses-compatible text model. The API catalog may also contain incompatible non-text models; the extension does not automatically choose a model for API keys.
+3. Start webpage or selected-text translation from the toolbar popup and confirm content sharing. Verify POST /v1/responses with streaming and store:false, separate API billing, safe invalid-key/quota messages and no fallback to ChatGPT billing.
+4. Disconnect and refresh the session to verify the key is forgotten, without calling OAuth revocation or revoking the platform key. Verify account switching and isolated model settings/cache.
 
-The documented OpenAI flow describes a loopback listener. This project instead accepts the callback manually. Offline checks do not establish end-to-end provider compatibility. Actual installed-extension OAuth, token exchange and translation verification remains pending; do not submit this draft until that verification and current screenshots are complete.
+Only activeTab, scripting and storage are requested, with host access limited to auth.openai.com and api.openai.com. No browser-history API, broad website permission, remote executable code or developer inference proxy is used. OAuth tokens and API keys stay in the session page's memory; API keys never pass through background/page message routing. Nonsecret registration identifiers, API connection digests and preferences use chrome.storage.local; account-isolated translation cache uses IndexedDB.
+
+The documented OpenAI OAuth flow describes a loopback listener. This project instead accepts the callback manually. Isolated Chromium checks with synthetic credentials/responses cover both modes but do not establish real provider compatibility or paid inference. Verify real OAuth, API-key translation and billing in the installed extension before submitting this draft with current screenshots.
 
 Support: xiaoliublog@gmail.com
 Privacy: https://github.com/xiaoliu-heng/translatemypage/blob/main/PRIVACY.md

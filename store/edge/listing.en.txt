@@ -1,7 +1,7 @@
 TranslateMyPage: AI Immersive Bilingual Translation
 
 Short description
-AI webpage and selected-text translation with formatting. Can use your authorized ChatGPT plan quota. Extension only.
+Bilingual webpage and selected-text translation. ChatGPT sign-in or your OpenAI API key (billed separately). No helper.
 
 Description
 Translate webpages and selected text with the original alongside the translation. Free and open source under the MIT license.
@@ -10,12 +10,12 @@ Preserve the original font, size, color, spacing, links, emphasis, inline code a
 
 Select text and a draggable pet moves beside it with a pulsing loading light. A game-style dialogue shows the result. Sleeping eyes mean translation is off; a steady bulb means ready. Supports position memory, keyboard shortcuts, explicit retry and reduced motion.
 
-Authorize on OpenAI's official page and choose from the current account's model catalog. Requests can share your authorized ChatGPT subscription quota without an API key. Models, eligibility and limits depend on OpenAI and workspace settings.
+Authorize on OpenAI's official page to use your account's available models and authorized ChatGPT subscription quota without an API key. Alternatively, configure your own OpenAI API key in the session tab and explicitly choose a Responses-compatible text model. API requests use the Responses API and are billed separately from ChatGPT subscriptions. The extension never switches billing methods automatically.
 
 Installation and sign-in
 Install only the desktop browser extension; no native helper or Node.js runtime is required. Open the extension's Translation Session tab and start official sign-in. After authorization redirects to http://127.0.0.1:1455/auth/callback, the browser may show a connection error because no local listener is running. Copy the complete address-bar URL and paste it into the session page. The manual callback is a project-specific adaptation.
 
-Keep the session tab open. Closing or refreshing it, restarting the browser, or updating the extension ends the in-memory login; authorize again next time. Tokens are never persisted in browser storage.
+Keep the session tab open. Closing or refreshing it, restarting the browser, or updating the extension clears in-memory credentials; authorize again or enter your API key next time. Tokens and keys are never persisted in browser storage. API-key disconnect only forgets the local credential; revoke the key separately on the OpenAI API platform.
 
 Privacy
 Content sharing is explained before the first translation. Requests go directly to OpenAI, without a developer-operated inference proxy, advertising or analytics. Translations are cached locally by account and can be cleared. Incognito, PDF, cross-origin frames and complex Shadow DOM are outside the current scope.

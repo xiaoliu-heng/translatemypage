@@ -238,11 +238,14 @@ export class PageTranslator {
     this.status = status || this.status;
     const active = this.status?.accounts.find(a => a.key === this.status?.activeKey);
     if (active && ['limited', 'ineligible', 'not_granted'].includes(active.plan)) {
-      this.paused = true; this.error = active.plan === 'limited' ? '套餐调用受限，可查看 ChatGPT 用量设置后点击重试。' : '当前账号无法使用套餐调用，请在扩展中查看授权状态。';
+      this.paused = true;
+      this.error = active.authType === 'api_key'
+        ? active.plan === 'limited' ? 'OpenAI API 调用受限，请检查平台用量、余额或限流后重试。' : '当前 API key 无法调用模型，请在扩展中检查密钥和权限。'
+        : active.plan === 'limited' ? '套餐调用受限，可查看 ChatGPT 用量设置后点击重试。' : '当前账号无法使用套餐调用，请在扩展中查看授权状态。';
     }
     if (disconnected) {
       if (!this.enabled && !this.selectionBusy) return;
-      this.paused = true; this.error = '翻译会话已断开，结果未知。重新登录后可重试未完成段落。';
+      this.paused = true; this.error = '翻译会话已断开，结果未知。重新连接会话后可重试未完成段落。';
       if (this.selectionBusy) this.failSelection(this.error);
       for (const r of this.records.values()) if (r.state === 'queued') r.state = 'failed';
       this.jobs.clear();

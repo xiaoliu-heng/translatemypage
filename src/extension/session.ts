@@ -1,15 +1,15 @@
 import { AuthManager, verifyIdentity } from '../core/auth';
-import { ChatGPTPlanProvider } from '../core/provider';
+import { OpenAIProvider } from '../core/provider';
 import { Scheduler } from '../core/scheduler';
 import { AppError, assert, PROTOCOL, publicError, RpcRequest } from '../shared/protocol';
 import { registrations, translationCache } from './storage';
 
-export interface SessionRuntime { complete(raw: string): Promise<void>; close(): void }
+export interface SessionRuntime { complete(raw: string): Promise<void>; useApiKey(raw: string): Promise<void>; close(): void }
 export async function startSession(): Promise<SessionRuntime> {
   let release!: () => void, ready!: (value: SessionRuntime) => void, fail!: (error: unknown) => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const initialized = new Promise<SessionRuntime>((resolve, reject) => { ready = resolve; fail = reject; });
-  // Only one page may hold credentials and refresh tokens in a browser profile.
+  // Only one page may hold OAuth credentials or API keys in a browser profile.
   void navigator.locks.request('translatemypage-session', { ifAvailable: true }, async lock => {
     if (!lock) { fail(new AppError('session_exists', '已有一个翻译会话。请从扩展按钮打开原会话标签页。')); return; }
     let port: chrome.runtime.Port | undefined, stopped = false, seq = 0;
@@ -22,7 +22,7 @@ export async function startSession(): Promise<SessionRuntime> {
       const store = await registrations(), cache = translationCache(); await cache.init();
       const auth = new AuthManager(store, switched => { if (switched) scheduler.cancelAll(); emit('status', auth.status()); },
         { fetch, verify: verifyIdentity, open: async url => { await chrome.tabs.create({ url }); } });
-      const provider = new ChatGPTPlanProvider(auth), scheduler = new Scheduler(auth, provider, cache, emit);
+      const provider = new OpenAIProvider(auth), scheduler = new Scheduler(auth, provider, cache, emit);
       const close = () => {
         if (stopped) return; stopped = true; clearInterval(heartbeat); clearTimeout(reconnect);
         scheduler.cancelAll(); auth.close(); port?.disconnect(); port = undefined; release();
@@ -36,11 +36,16 @@ export async function startSession(): Promise<SessionRuntime> {
           case 'account.select': return auth.select(params.accountKey);
           case 'account.logout': return auth.logout(params.accountKey);
           case 'models.list': {
-            const account = auth.active(); assert(account, 'signed_out', '请先登录 ChatGPT。');
+            const account = auth.active(); assert(account, 'signed_out', '请先登录 ChatGPT 或设置 OpenAI API key。');
             try { return await provider.models(account.key); }
             catch (error) {
-              if (error instanceof AppError && ['limited', 'ineligible', 'temporarily_unavailable', 'reauth_required', 'not_granted'].includes(error.code))
-                await auth.mark(account.key, error.code === 'reauth_required' ? 'authorized_unverified' : error.code as any, error.code === 'reauth_required');
+              if (error instanceof AppError) {
+                switch (error.code) {
+                  case 'reauth_required': await auth.mark(account.key, 'authorized_unverified', true); break;
+                  case 'limited': case 'ineligible': case 'temporarily_unavailable': case 'not_granted':
+                    await auth.mark(account.key, error.code); break;
+                }
+              }
               throw error;
             }
           }
@@ -76,7 +81,7 @@ export async function startSession(): Promise<SessionRuntime> {
       const tab = await chrome.tabs.getCurrent();
       if (tab?.id !== undefined) await chrome.tabs.update(tab.id, { autoDiscardable: false });
       window.addEventListener('pagehide', close, { once: true });
-      ready({ complete: raw => auth.complete(raw), close });
+      ready({ complete: raw => auth.complete(raw), useApiKey: raw => auth.useApiKey(raw), close });
       await held;
     } catch (error) { stopped = true; clearInterval(heartbeat); clearTimeout(reconnect); port?.disconnect(); fail(error); release(); }
   }).catch(fail);

@@ -42,7 +42,7 @@ export class SessionBridge {
       if (this.port !== port) return;
       this.port = undefined; this.tabId = undefined; this.status = undefined; this.connection = 'disconnected';
       for (const call of this.pending.values()) {
-        clearTimeout(call.timer); call.reject(new AppError('session_disconnected', '翻译会话已断开，已提交任务的结果未知。请重新登录后手动重试。'));
+        clearTimeout(call.timer); call.reject(new AppError('session_disconnected', '翻译会话已断开，已提交任务的结果未知。请重新连接会话后手动重试。'));
       }
       this.pending.clear(); this.disconnected();
     });
@@ -52,11 +52,11 @@ export class SessionBridge {
     if (this.connecting) return this.connecting;
     // A visible session survives service-worker suspension. Wake its transport on demand.
     this.connecting = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new AppError('session_required', '请打开扩展中的“翻译会话”并登录 ChatGPT。')), 3000);
+      const timer = setTimeout(() => reject(new AppError('session_required', '请打开扩展中的“翻译会话”，登录 ChatGPT 或设置 OpenAI API key。')), 3000);
       this.ready = () => { clearTimeout(timer); resolve(); };
       void chrome.runtime.sendMessage({ type: 'session.wake' }).catch(() => {
         if (this.connection === 'ready') { clearTimeout(timer); resolve(); }
-        else { clearTimeout(timer); reject(new AppError('session_required', '请打开扩展中的“翻译会话”并登录 ChatGPT。')); }
+        else { clearTimeout(timer); reject(new AppError('session_required', '请打开扩展中的“翻译会话”，登录 ChatGPT 或设置 OpenAI API key。')); }
       });
     }).finally(() => { this.connecting = undefined; this.ready = undefined; });
     return this.connecting;

@@ -8,7 +8,7 @@ export function cacheDisk(): CachePersistence {
   return { read: async () => structuredClone(saved), write: async value => { saved = structuredClone(value); } };
 }
 export async function temporary() { const dir = await mkdtemp(join(tmpdir(), 'translatemypage-test-')); return { dir, remove: () => rm(dir, { recursive: true, force: true }) }; }
-export const account = (): Account => ({ key: 'account-1', clientId: 'oaiapp_example', subject: 'user-1', issuer: 'https://auth.openai.com', name: 'Test', email: 'test@example.com', identity: 'signed_in', plan: 'authorized_unverified' });
+export const account = (): Account => ({ authType: 'chatgpt', key: 'account-1', clientId: 'oaiapp_example', subject: 'user-1', issuer: 'https://auth.openai.com', name: 'Test', email: 'test@example.com', identity: 'signed_in', plan: 'authorized_unverified' });
 export function params(page = 'page-1', id = 's1', text = 'Hello world.'): TranslationParams {
   return { requestKey: crypto.randomUUID(), accountKey: 'account-1', accountEpoch: 1, model: 'account-model',
     document: { id: page, frameId: 0, generation: 1, pageKey: page }, sourceLanguage: 'auto', targetLanguage: 'zh-CN', title: 'Test page',

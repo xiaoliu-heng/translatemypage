@@ -1,6 +1,6 @@
 import { AppError, assert, PROMPT_VERSION, publicError, TranslationParams, validateTranslationParams } from '../shared/protocol';
 import { AuthManager } from './auth';
-import { ChatGPTPlanProvider } from './provider';
+import { OpenAIProvider } from './provider';
 import { digest, TranslationCache } from './storage';
 interface Job { id: string; params: TranslationParams; state: string; group: Group; created: number }
 interface Group { key: string; jobs: Job[]; params: TranslationParams; controller: AbortController; running: boolean }
@@ -12,14 +12,14 @@ export class Scheduler {
   private running = false; private lastPage = ''; private paused = false;
   private cancellation = 0;
   private cancelledPages = new Map<string, number>();
-  constructor(private auth: Pick<AuthManager, 'active' | 'epoch' | 'mark'>, private provider: Pick<ChatGPTPlanProvider, 'translate'>,
+  constructor(private auth: Pick<AuthManager, 'active' | 'epoch' | 'mark'>, private provider: Pick<OpenAIProvider, 'translate'>,
     private cache: TranslationCache, private emit: Emit) {}
   get busy(): boolean { return this.running || this.groups.size > 0; }
   async submit(p: TranslationParams): Promise<{ jobId: string }> {
     validateTranslationParams(p);
     const a = this.auth.active();
     assert(a && a.key === p.accountKey && p.accountEpoch === this.auth.epoch, 'stale_account', '账号已变化，请重新开始翻译。');
-    assert(a.identity === 'signed_in' && a.plan !== 'not_granted', 'not_granted', '请先登录并授权使用套餐。');
+    assert(a.identity === 'signed_in' && a.plan !== 'not_granted', 'not_granted', '请先登录并授权 ChatGPT 套餐，或设置 OpenAI API key。');
     const cancellation = this.cancellation, pageVersion = this.cancelledPages.get(p.document.pageKey);
     this.prune();
     const idempotency = await digest([p.accountEpoch, p.document, p.requestKey]);

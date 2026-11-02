@@ -1,4 +1,4 @@
-import { Account, AppError, assert, PlanState, Status } from '../shared/protocol';
+import { Account, AppError, assert, ChatGPTAccount, PlanState, Status } from '../shared/protocol';
 import { consumeCallback, PendingAuthorization, CallbackError } from './callback';
 import { digest, RegistrationStore } from './storage';
 import { verifyIdentity } from './identity';
@@ -8,22 +8,28 @@ export const ISSUER = 'https://auth.openai.com';
 export const RESOURCE = 'https://api.openai.com/v1';
 export const SCOPES = 'openid profile email offline_access resource.invoke chatgpt.tokens.use.direct';
 export const REDIRECT_URI = 'http://127.0.0.1:1455/auth/callback';
-export interface Credential {
-  clientId: string; accessToken: string; refreshToken?: string; idToken?: string;
+export interface ChatGPTCredential {
+  authType: 'chatgpt'; clientId: string; accessToken: string; refreshToken?: string; idToken?: string;
   scopes: string[]; expiresAt: number;
 }
-export function credentialsFromResponse(t: any, clientId: string, previous?: Credential): Credential {
-  assert(typeof t.access_token === 'string' && t.access_token.length > 0 && Number.isFinite(t.expires_in) && t.expires_in > 0 &&
+export interface ApiKeyCredential { authType: 'api_key'; accessToken: string }
+export type Credential = ChatGPTCredential | ApiKeyCredential;
+export function credentialsFromResponse(t: unknown, clientId: string, previous?: ChatGPTCredential): ChatGPTCredential {
+  assert(t && typeof t === 'object' && 'access_token' in t && 'expires_in' in t && 'token_type' in t,
+    'invalid_token_response', '授权服务返回了不完整的凭据。');
+  const refreshToken = 'refresh_token' in t ? t.refresh_token : undefined;
+  const idToken = 'id_token' in t ? t.id_token : undefined;
+  assert(typeof t.access_token === 'string' && t.access_token.length > 0 && typeof t.expires_in === 'number' && Number.isFinite(t.expires_in) && t.expires_in > 0 &&
     typeof t.token_type === 'string' && t.token_type.toLowerCase() === 'bearer' &&
-    (t.refresh_token === undefined || typeof t.refresh_token === 'string') && (t.id_token === undefined || typeof t.id_token === 'string'),
+    (refreshToken === undefined || typeof refreshToken === 'string') && (idToken === undefined || typeof idToken === 'string'),
   'invalid_token_response', '授权服务返回了不完整的凭据。');
-  return { clientId, accessToken: t.access_token, refreshToken: t.refresh_token ?? previous?.refreshToken,
-    idToken: t.id_token ?? previous?.idToken, expiresAt: Date.now() + t.expires_in * 1000,
-    scopes: typeof t.scope === 'string' ? t.scope.split(/\s+/).filter(Boolean) : previous?.scopes ?? [] };
+  return { authType: 'chatgpt', clientId, accessToken: t.access_token, refreshToken: refreshToken ?? previous?.refreshToken,
+    idToken: idToken ?? previous?.idToken, expiresAt: Date.now() + t.expires_in * 1000,
+    scopes: 'scope' in t && typeof t.scope === 'string' ? t.scope.split(/\s+/).filter(Boolean) : previous?.scopes ?? [] };
 }
 export interface AuthDependencies { fetch: typeof fetch; verify: typeof verifyIdentity; open(url: string): Promise<void> }
 interface Attempt extends PendingAuthorization {
-  selected?: Account; timer: ReturnType<typeof setTimeout>; abort: AbortController;
+  selected?: ChatGPTAccount; timer: ReturnType<typeof setTimeout>; abort: AbortController;
 }
 function random(length = 32): string {
   return btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(length)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -58,10 +64,13 @@ export class AuthManager {
     assert(!this.signingOut, 'auth_busy', '正在退出，请稍候再登录。');
     if (this.preparing) return this.preparing;
     if (this.attempt) return { pending: true };
-    const generation = this.generation;
+    const generation = ++this.generation;
     const work = (async () => {
       await this.processing;
-      const selected = key ? this.find(key) : undefined;
+      assert(!this.closed && generation === this.generation, 'cancelled', '登录已取消。');
+      const selectedAccount = key ? this.find(key) : undefined;
+      assert(!selectedAccount || selectedAccount.authType === 'chatgpt', 'invalid_auth_type', 'API 密钥账号不能通过 ChatGPT 重新授权，请重新输入密钥。');
+      const selected = selectedAccount?.authType === 'chatgpt' ? selectedAccount : undefined;
       const clientId = selected?.clientId || this.registrations.data.pendingClientId || (!newAccount ? this.registrations.data.lastClientId : undefined);
       const verifier = random(48), state = random(), nonce = random();
       const challenge = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
@@ -84,6 +93,27 @@ export class AuthManager {
     })();
     this.preparing = work;
     try { return await work; } finally { if (this.preparing === work) this.preparing = undefined; this.changed(false); }
+  }
+  async useApiKey(raw: string): Promise<void> {
+    assert(!this.closed, 'session_closed', '翻译会话已结束，请重新打开。');
+    assert(!this.signingOut, 'auth_busy', '正在退出，请稍候再连接。');
+    const secret = raw.trim();
+    assert(secret.length > 0 && secret.length <= 4096 && !/[\s\u0000-\u001f\u007f-\u009f]/u.test(secret),
+      'invalid_api_key', '请输入有效的 API 密钥；密钥不能包含空白或控制字符。');
+    this.cancel();
+    const generation = this.generation;
+    await this.processing?.catch(() => {});
+    assert(!this.closed && generation === this.generation, 'cancelled', '连接 API 密钥已取消。');
+    const key = await digest(['api_key', secret]);
+    assert(!this.closed && generation === this.generation, 'cancelled', '连接 API 密钥已取消。');
+    const existing = this.accounts.find(account => account.key === key);
+    const account: Account = { authType: 'api_key', key, name: existing?.name ||
+      `OpenAI API 密钥 ${this.accounts.filter(account => account.authType === 'api_key').length + 1}`,
+    identity: 'signed_in', plan: 'authorized_unverified' };
+    this.credentials.set(key, { authType: 'api_key', accessToken: secret });
+    if (existing) Object.assign(existing, account); else this.accounts.push(account);
+    this.activeKey = key; this.epoch++; this.notice = 'API 密钥已在本次会话中配置，尚未验证；API 使用单独计费。';
+    this.changed(true);
   }
   async complete(raw: string): Promise<void> {
     const attempt = this.attempt;
@@ -127,7 +157,7 @@ export class AuthManager {
         this.registrations.data.bindings[callback.clientId] = subjectHash;
         this.registrations.data.lastClientId = callback.clientId; delete this.registrations.data.pendingClientId; await this.registrations.save();
         attempt.abort.signal.throwIfAborted();
-        const account: Account = { key, clientId: callback.clientId, subject: identity.sub, issuer: identity.iss,
+        const account: Account = { authType: 'chatgpt', key, clientId: callback.clientId, subject: identity.sub, issuer: identity.iss,
           name: typeof identity.name === 'string' ? identity.name : '', email: typeof identity.email === 'string' ? identity.email : '',
           identity: 'signed_in', plan: credential.scopes.includes('chatgpt.tokens.use.direct') ? 'authorized_unverified' : 'not_granted' };
         this.credentials.set(key, credential);
@@ -148,20 +178,30 @@ export class AuthManager {
     clearTimeout(attempt.timer); attempt.verifier = ''; attempt.state = ''; attempt.nonce = '';
     if (this.attempt === attempt) this.attempt = undefined;
   }
-  cancel(): void { this.generation++; if (this.attempt) { this.attempt.abort.abort(); this.finish(this.attempt); } this.changed(false); }
+  cancel(): void {
+    this.generation++; this.preparing = undefined;
+    if (this.attempt) { this.attempt.abort.abort(); this.finish(this.attempt); }
+    this.changed(false);
+  }
   async select(key: string): Promise<Status> {
     assert(!this.signingOut, 'auth_busy', '正在退出，请稍候再切换账号。');
-    this.find(key); this.cancel(); await this.processing?.catch(() => {});
+    assert(!this.closed, 'session_closed', '翻译会话已结束。');
+    this.find(key); this.cancel(); const generation = this.generation; await this.processing?.catch(() => {});
+    assert(!this.closed && generation === this.generation, 'cancelled', '切换账号已取消。');
     this.activeKey = key; this.epoch++; this.changed(true); return this.status();
   }
   async mark(key: string, plan: PlanState, reauth = false): Promise<void> {
-    const account = this.find(key); account.plan = plan; if (reauth) account.identity = 'reauth_required'; this.changed(false);
+    const account = this.find(key); account.plan = plan; if (reauth) account.identity = 'reauth_required';
+    if (account.authType === 'api_key' && plan === 'last_request_succeeded') this.notice = undefined;
+    this.changed(false);
   }
   private async token(fields: Record<string, string>, signal?: AbortSignal): Promise<any> {
     const timeout = AbortSignal.timeout(20_000);
+    // Native Window.fetch must not receive the dependency object as its receiver.
+    const request = this.deps.fetch;
     let response: Response;
     try {
-      response = await this.deps.fetch(`${ISSUER}/api/accounts/oauth/token`, { method: 'POST', credentials: 'omit', redirect: 'error',
+      response = await request(`${ISSUER}/api/accounts/oauth/token`, { method: 'POST', credentials: 'omit', redirect: 'error',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields),
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
     } catch {
@@ -182,10 +222,14 @@ export class AuthManager {
   }
   async access(key: string): Promise<Credential> {
     assert(!this.closed, 'session_closed', '翻译会话已结束。');
-    const account = this.find(key); assert(account.identity === 'signed_in', 'reauth_required', '请重新登录。');
+    const account = this.find(key);
+    const reauthMessage = account.authType === 'api_key' ? '请重新输入 API 密钥。' : '请重新登录。';
+    assert(account.identity === 'signed_in', 'reauth_required', reauthMessage);
     const existing = this.refreshes.get(key); if (existing) return existing;
     const work = (async () => {
       const saved = this.credentials.get(key); assert(saved, 'reauth_required', '会话已结束，请重新登录。');
+      if (saved.authType === 'api_key') return saved;
+      assert(account.authType === 'chatgpt', 'account_mismatch', '账号凭据类型不匹配。');
       assert(saved.scopes.includes('chatgpt.tokens.use.direct'), 'not_granted', '请先授权使用 ChatGPT 套餐。');
       if (saved.expiresAt > Date.now() + 60_000) return saved;
       assert(saved.refreshToken, 'reauth_required', '会话已过期，请重新授权。');
@@ -211,13 +255,14 @@ export class AuthManager {
     await this.refreshes.get(key)?.catch(() => {});
     const saved = this.credentials.get(key); let revoked = false;
     try {
-      if (saved?.refreshToken) {
-        const discovery = await this.deps.fetch(`${ISSUER}/.well-known/openid-configuration`, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10_000) });
+      if (saved?.authType === 'chatgpt' && saved.refreshToken) {
+        const request = this.deps.fetch;
+        const discovery = await request(`${ISSUER}/.well-known/openid-configuration`, { credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(10_000) });
         const data = await discovery.json() as any;
         assert(discovery.ok && typeof data.revocation_endpoint === 'string' && new URL(data.revocation_endpoint).origin === ISSUER, 'invalid_discovery', '授权服务配置无效。');
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            const result = await this.deps.fetch(data.revocation_endpoint, { method: 'POST', credentials: 'omit', redirect: 'error',
+            const result = await request(data.revocation_endpoint, { method: 'POST', credentials: 'omit', redirect: 'error',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: saved.refreshToken, token_type_hint: 'refresh_token', client_id: saved.clientId }), signal: AbortSignal.timeout(10_000) });
             if (result.ok) { revoked = true; break; } if (result.status < 500) break;
           } catch { if (attempt === 1) break; }
@@ -226,7 +271,8 @@ export class AuthManager {
       }
     } catch { /* Always finish local sign-out. */ }
     this.credentials.delete(key); account.plan = 'not_granted';
-    this.notice = revoked ? undefined : '已退出本次会话，未确认远端撤销。可在 ChatGPT 设置中断开此应用。';
+    this.notice = account.authType === 'api_key' ? '已从本次会话忘记 API 密钥；未撤销平台密钥。如需撤销，请在 OpenAI API 平台操作。'
+      : revoked ? undefined : '已退出本次会话，未确认远端撤销。可在 ChatGPT 设置中断开此应用。';
     this.signingOut = false; this.changed(false); return { revoked };
   }
   close(): void {

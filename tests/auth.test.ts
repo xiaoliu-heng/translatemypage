@@ -5,6 +5,7 @@ import { generateKeyPair, SignJWT, exportJWK } from 'jose';
 import { AuthDependencies, AuthManager, ISSUER, REDIRECT_URI, SCOPES, verifyIdentity } from '../src/core/auth';
 import { newRegistration, RegistrationStore } from '../src/core/storage';
 import { deferred, until } from './helpers';
+import { AppError } from '../src/shared/protocol';
 
 const tokens = (extra: object = {}) => ({ access_token: 'test-access', refresh_token: 'test-refresh', id_token: 'test-id', expires_in: 3600, token_type: 'Bearer', scope: SCOPES, ...extra });
 function fixture(t: TestContext, overrides: Partial<AuthDependencies> = {}, saved?: RegistrationStore) {
@@ -66,9 +67,11 @@ test('failed initial exchange retains issued registration; next attempt reuses i
   assert.notEqual(f.opened().searchParams.get('state'), state); assert.equal(f.opened().searchParams.has('agent_name_hint'), false);
 });
 
-test('refresh is single-flight; sign-out revokes the latest rotating token and clears the session', async t => {
+test('browser-compatible transport signs in, refreshes once, and revokes the latest rotating token on sign-out', async t => {
   let refreshes = 0;
-  const f = fixture(t, { fetch: (async (url, init) => {
+  const f = fixture(t, { fetch: (async function (this: unknown, url, init) {
+    // Native Window.fetch rejects arbitrary receivers; Node's fetch does not.
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
     if (String(url).endsWith('openid-configuration')) return Response.json({ revocation_endpoint: `${ISSUER}/revoke` });
     if (String(url).endsWith('/revoke')) { assert.equal((init!.body as URLSearchParams).get('token'), 'rotated-refresh'); return new Response(null, { status: 200 }); }
     const body = init!.body as URLSearchParams;
@@ -180,4 +183,134 @@ test('registration storage errors are identified before sending a one-time code 
   await f.auth.begin();
   await assert.rejects(f.auth.complete(f.callback()), (error: any) => error.code === 'auth_registration_failed' && !error.message.includes('private-'));
   assert.equal(requests, 0); assert(f.auth.status().notice!.includes('auth_registration_failed'));
+});
+
+test('API keys stay in local credentials, never in public status or registration storage, and disconnect without OAuth', async t => {
+  let requests = 0;
+  const f = fixture(t, { fetch: async () => { requests++; throw new Error('OAuth must not be used'); } });
+  const before = JSON.stringify(f.store.data);
+  const secret = 'personal-key-PRIVATE-KEY-MATERIAL';
+  await f.auth.useApiKey(`  ${secret}  `);
+  const account = f.auth.active()!;
+  assert.equal(account.authType, 'api_key'); assert.equal(account.identity, 'signed_in');
+  assert.equal(account.plan, 'authorized_unverified');
+  assert.equal('clientId' in account, false); assert.equal('email' in account, false);
+  assert.equal('subject' in account, false); assert.equal('issuer' in account, false);
+  assert.deepEqual(await f.auth.access(account.key), { authType: 'api_key', accessToken: secret });
+  const publicData = JSON.stringify({ status: f.auth.status(), registrations: f.store.data, snapshots: f.snapshots });
+  assert.equal(publicData.includes(secret), false); assert.equal(publicData.includes('PRIVATE-KEY-MATERIAL'), false);
+  assert.equal(f.snapshots.length, 0);
+  assert.equal(f.opens(), 0); assert.equal(requests, 0);
+  await f.auth.mark(account.key, 'last_request_succeeded');
+  assert.equal(f.auth.status().notice, undefined);
+  assert.equal((await f.auth.logout(account.key)).revoked, false);
+  assert.equal(f.auth.active()!.identity, 'signed_out'); assert.equal(f.auth.active()!.plan, 'not_granted');
+  await assert.rejects(f.auth.access(account.key), (error: unknown) => error instanceof AppError && error.code === 'reauth_required');
+  assert.match(f.auth.status().notice!, /未撤销平台密钥/);
+  assert.equal(requests, 0); assert.equal(JSON.stringify(f.store.data), before);
+});
+
+test('API identities are stable for reused keys and isolate distinct keys across account switches and runtimes', async t => {
+  const f = fixture(t);
+  await f.auth.useApiKey('first-personal-key'); const first = f.auth.active()!.key;
+  await f.auth.useApiKey('second-personal-key'); const second = f.auth.active()!.key;
+  assert.notEqual(first, second); assert.equal(f.auth.status().accounts.length, 2);
+  await f.auth.select(first);
+  assert.equal((await f.auth.access(first)).accessToken, 'first-personal-key');
+  await f.auth.useApiKey(' second-personal-key ');
+  assert.equal(f.auth.active()!.key, second); assert.equal(f.auth.status().accounts.length, 2);
+  await f.auth.logout(second); await f.auth.useApiKey('second-personal-key');
+  assert.equal(f.auth.active()!.key, second); assert.equal(f.auth.status().accounts.length, 2);
+  f.auth.close();
+  const next = fixture(t, {}, f.store);
+  assert.deepEqual(next.auth.status().accounts, []);
+  await assert.rejects(next.auth.access(first));
+  await next.auth.useApiKey('first-personal-key'); assert.equal(next.auth.active()!.key, first);
+});
+
+test('invalid API key input leaves the active credential and pending OAuth unchanged without assuming a key prefix', async t => {
+  const f = fixture(t);
+  await f.auth.useApiKey('not-an-sk-prefixed-key');
+  const account = f.auth.active()!;
+  await f.auth.begin(); const authorization = f.auth.status().authorization;
+  for (const raw of ['', ' \t\n ', 'key with space', 'key\twith-tab', 'key\nwith-newline', 'key\u0000control', 'key\u007fcontrol', 'x'.repeat(4097)]) {
+    await assert.rejects(f.auth.useApiKey(raw), (error: unknown) => error instanceof AppError && error.code === 'invalid_api_key');
+    assert.equal(f.auth.active()!.key, account.key);
+    assert.equal((await f.auth.access(account.key)).accessToken, 'not-an-sk-prefixed-key');
+    assert.deepEqual(f.auth.status().authorization, authorization);
+  }
+});
+
+test('API account reauthorization never opens OAuth and mixed account switching preserves each credential', async t => {
+  const f = fixture(t);
+  await f.auth.begin(); await f.auth.complete(f.callback()); const chatgpt = f.auth.active()!.key;
+  assert.equal(f.auth.active()!.authType, 'chatgpt');
+  await f.auth.useApiKey('personal-key'); const api = f.auth.active()!.key;
+  await assert.rejects(f.auth.begin(api), (error: unknown) => error instanceof AppError && error.code === 'invalid_auth_type');
+  assert.equal(f.opens(), 1);
+  await f.auth.select(chatgpt); assert.equal((await f.auth.access(chatgpt)).accessToken, 'test-access');
+  await f.auth.select(api); assert.equal((await f.auth.access(api)).accessToken, 'personal-key');
+  assert.equal(f.auth.active()!.authType, 'api_key');
+});
+
+test('connecting an API key cancels OAuth preparation and does not leave a usable callback', async t => {
+  const f = fixture(t);
+  const preparing = f.auth.begin();
+  const connecting = f.auth.useApiKey('personal-key');
+  await assert.rejects(preparing, (error: unknown) => error instanceof AppError && error.code === 'cancelled');
+  await connecting;
+  assert.equal(f.opens(), 0); assert.equal(f.auth.status().authorizing, false);
+  await assert.rejects(f.auth.complete('http://127.0.0.1:1455/auth/callback?code=old&state=old'),
+    (error: unknown) => error instanceof AppError && error.code === 'no_pending_authorization');
+  assert.equal(f.auth.active()!.authType, 'api_key');
+});
+
+test('API connection waits for cancelled in-flight OAuth processing and discards its late credentials', async t => {
+  const gate = deferred<Response>(); let requested = false;
+  const f = fixture(t, { fetch: async () => { requested = true; return gate.promise; } });
+  await f.auth.begin(); const completing = f.auth.complete(f.callback());
+  await until(() => requested);
+  const rejected = assert.rejects(completing);
+  const connecting = f.auth.useApiKey('personal-key');
+  assert.equal(f.auth.active(), undefined);
+  gate.resolve(Response.json(tokens())); await rejected; await connecting;
+  assert.equal(f.auth.status().accounts.length, 1);
+  assert.equal(f.auth.active()!.authType, 'api_key');
+  assert.equal((await f.auth.access(f.auth.active()!.key)).accessToken, 'personal-key');
+});
+
+test('cancel, close, account switch, OAuth and replacement key all invalidate an API digest already in flight', async t => {
+  for (const action of ['cancel', 'close', 'select', 'oauth', 'replace'] as const) {
+    const f = fixture(t);
+    await f.auth.useApiKey('existing-personal-key'); const existing = f.auth.active()!.key;
+    const original = crypto.subtle.digest;
+    const gate = deferred<void>(); let started = false;
+    crypto.subtle.digest = async function (algorithm, data) {
+      if (!started) { started = true; await gate.promise; }
+      return original.call(this, algorithm, data);
+    };
+    try {
+      const connecting = f.auth.useApiKey('cancelled-personal-key');
+      const rejected = assert.rejects(connecting, (error: unknown) => error instanceof AppError && error.code === 'cancelled');
+      await until(() => started);
+      if (action === 'cancel') f.auth.cancel();
+      else if (action === 'close') f.auth.close();
+      else if (action === 'select') await f.auth.select(existing);
+      else if (action === 'oauth') await f.auth.begin();
+      else await f.auth.useApiKey('replacement-personal-key');
+      gate.resolve(); await rejected;
+      if (action === 'close') assert.deepEqual(f.auth.status().accounts, []);
+      else {
+        assert.equal(f.auth.status().accounts.length, action === 'replace' ? 2 : 1);
+        assert.equal((await f.auth.access(f.auth.active()!.key)).accessToken,
+          action === 'replace' ? 'replacement-personal-key' : 'existing-personal-key');
+      }
+    } finally { gate.resolve(); crypto.subtle.digest = original; f.auth.close(); }
+  }
+});
+
+test('a closed session rejects API configuration without restoring any account or registration secret', async t => {
+  const f = fixture(t); f.auth.close();
+  await assert.rejects(f.auth.useApiKey('personal-key'), (error: unknown) => error instanceof AppError && error.code === 'session_closed');
+  assert.deepEqual(f.auth.status().accounts, []); assert.equal(f.snapshots.length, 0);
 });

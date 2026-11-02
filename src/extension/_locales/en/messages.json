@@ -3,6 +3,6 @@
     "message": "TranslateMyPage: AI Bilingual Translation"
   },
   "extensionDescription": {
-    "message": "AI bilingual webpage and selected-text translation. Keeps formatting and can use your ChatGPT plan. No helper required."
+    "message": "AI bilingual webpage and selected-text translation. Preserves formatting. Use a ChatGPT plan or your OpenAI API key. No helper."
   }
 }
