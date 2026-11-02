@@ -2,8 +2,10 @@ import { AppError, DEFAULT_SETTINGS, fingerprint, SessionEvent, MAX_BATCH_CHARS,
 import { protectLiteralMarkers } from '../shared/formatting';
 import { appendTranslation, candidates, excluded, OWN, snapshot } from './extractor';
 import { TranslationMascot } from './mascot';
+import { hasSharingConsent, providerOrigin } from '../shared/providers';
+import { alreadyTargetLanguage, identicalTranslation, visibleText } from './language';
 
-interface RecordState { element: Element; segment: Segment; state: 'idle' | 'queued' | 'done' | 'failed' | 'skipped'; near: boolean; node?: HTMLElement }
+interface RecordState { element: Element; segment: Segment; state: 'idle' | 'detecting' | 'ready' | 'queued' | 'done' | 'failed' | 'skipped'; near: boolean; node?: HTMLElement; languageHint?: string }
 type Batch = { records: RecordState[]; generation: number; snapshots?: Segment[]; selection?: { id: string; text: string; protected: Record<string, string> } };
 type SelectedText = { text: string; range: Range };
 
@@ -18,6 +20,9 @@ export class PageTranslator {
   private documentId = '';
   private generation = 0;
   private enabled = false;
+  private initializing?: Promise<void>;
+  private activation = 0;
+  private preparing = false;
   private paused = false;
   private pending = 0;
   private observer?: IntersectionObserver;
@@ -43,17 +48,47 @@ export class PageTranslator {
     const r = await chrome.runtime.sendMessage({ type, ...data });
     if (r?.error) throw new AppError(r.error.code, r.error.message); return r?.result;
   }
-  async control(action: string, status: Status, settings: Settings): Promise<void> {
-    this.status = status; this.settings = settings;
+  initialize(): Promise<void> {
     this.ensureMascot();
-    if (action === 'selection') { await this.translateSelection(); return; }
-    const hello = await this.rpc('page.hello'); this.documentId = hello.documentId;
+    const activation = this.activation;
+    return this.initializing ||= this.rpc('page.hello').then(hello => {
+      if (activation !== this.activation) return;
+      this.documentId = hello.documentId;
+      if (hello.settings) this.settings = hello.settings;
+      this.stateChanged(hello.status, hello.connection === 'disconnected');
+      this.render();
+    }).catch(() => { if (activation === this.activation) { this.error = '扩展连接不可用，请刷新页面重试。'; this.render(); } });
+  }
+  async control(action: string, status: Status, settings: Settings): Promise<void> {
     if (action === 'stop') { this.stop(); return; }
+    this.status = status; this.settings = settings; this.ensureMascot();
     if (action === 'idle') { this.render(); return; }
-    if (action === 'retry' && this.enabled) {
-      await this.retry(); return;
-    }
+    const token = ++this.activation;
+    if (!await this.prepare(token)) return;
+    if (action === 'selection') { await this.translateSelection(); return; }
+    if (action === 'retry' && this.enabled) { await this.retry(); return; }
     await this.start();
+  }
+  private async prepare(token: number): Promise<boolean> {
+    this.preparing = true; this.error = ''; this.render();
+    try {
+      const href = location.href;
+      const prepared = await this.rpc('page.prepare');
+      if (token !== this.activation || href !== location.href) return false;
+      this.documentId = prepared.documentId;
+      this.status = prepared.status || this.status; this.settings = prepared.settings || this.settings;
+      const account = this.status?.accounts.find(a => a.key === this.status?.activeKey);
+      if (!prepared.ready || !account) { this.error = '请在翻译会话中完成账号和模型设置，然后再次点击。'; return false; }
+      if (!hasSharingConsent(this.settings, account)) {
+        const epoch = this.status!.accountEpoch, origin = providerOrigin(account);
+        const accepted = await this.mascot!.requestSharing(origin, account.authType === 'api_key' ? '所选 API 服务按其用量计费' : '使用所选 ChatGPT 套餐额度');
+        if (!accepted || token !== this.activation || href !== location.href || epoch !== this.status?.accountEpoch) return false;
+        const consent = await this.rpc('page.consent', { origin, accountEpoch: epoch });
+        if (token !== this.activation || href !== location.href || epoch !== this.status?.accountEpoch) return false;
+        this.settings = consent.settings;
+      }
+      return token === this.activation;
+    } finally { if (token === this.activation) { this.preparing = false; this.render(); } }
   }
   private async start(): Promise<void> {
     this.stop(false); this.enabled = true; this.paused = false; this.error = ''; this.href = location.href;
@@ -94,6 +129,7 @@ export class PageTranslator {
     this.render(); this.pump();
   }
   stop(removeMascot = false): void {
+    this.activation++; this.preparing = false; this.mascot?.cancelSharing();
     this.generation++; this.enabled = false; this.paused = false;
     this.observer?.disconnect(); this.mutations?.disconnect(); clearInterval(this.routeTimer); clearInterval(this.connectionTimer); this.connectionTimer = undefined; clearTimeout(this.mutationTimer);
     document.defaultView?.removeEventListener('resize', this.refreshStyles);
@@ -119,7 +155,7 @@ export class PageTranslator {
     for (const element of candidates(root, this.settings.excludedSelectors)) {
       if (this.records.has(element)) continue;
       const source = snapshot(element);
-      const r: RecordState = { element, segment: { id: `p${++this.sequence}`, revision: 1, ...source }, state: 'idle', near: false };
+      const r: RecordState = { element, segment: { id: `p${++this.sequence}`, revision: 1, ...source }, state: 'idle', near: false, languageHint: element.closest('[lang]')?.getAttribute('lang') || '' };
       if (source.text.length + JSON.stringify(source.protected).length > MAX_BATCH_CHARS - 256) r.state = 'skipped';
       this.records.set(element, r); this.ids.set(r.segment.id, r); this.observer?.observe(element);
     }
@@ -133,7 +169,9 @@ export class PageTranslator {
       }
       if (![...this.dirty].some(d => d === element || d.contains(element) || element.contains(d))) continue;
       const source = snapshot(element);
-      if (source.sourceHash !== r.segment.sourceHash || source.text !== r.segment.text || JSON.stringify(source.protected) !== JSON.stringify(r.segment.protected)) {
+      const hint = element.closest('[lang]')?.getAttribute('lang') || '';
+      if (hint !== r.languageHint || source.sourceHash !== r.segment.sourceHash || source.text !== r.segment.text || JSON.stringify(source.protected) !== JSON.stringify(r.segment.protected)) {
+        r.languageHint = hint;
         r.node?.remove(); r.node = undefined; r.segment = { ...r.segment, ...source, revision: r.segment.revision + 1 };
         r.state = source.text.length < 2 || source.text.length + JSON.stringify(source.protected).length > MAX_BATCH_CHARS - 256 ? 'skipped' : 'idle';
       } else if (r.state === 'done') {
@@ -141,7 +179,7 @@ export class PageTranslator {
         // Reuse the validated translation; formatting changes don't need another model call.
         const translated = this.memory.get(`${this.context()}:${source.sourceHash}`);
         r.node?.remove(); r.node = undefined;
-        if (translated !== undefined) r.node = appendTranslation(element, translated, source.protected); else r.state = 'idle';
+        if (translated !== undefined && !identicalTranslation(r.segment.text, translated, source.protected)) r.node = appendTranslation(element, translated, source.protected); else r.state = translated === undefined ? 'idle' : 'skipped';
       }
     }
     for (const root of this.dirty) if (root.isConnected) this.scan(root);
@@ -149,15 +187,16 @@ export class PageTranslator {
   }
   private pump(): void {
     if (!this.enabled || this.paused || !this.status) return;
+    for (const r of this.records.values()) if (r.near && r.state === 'idle' && r.element.isConnected) void this.detectRecord(r);
     while (this.jobs.size + this.pending < 2) {
-      const queue = [...this.records.values()].filter(r => r.near && r.state === 'idle' && r.element.isConnected)
+      const queue = [...this.records.values()].filter(r => r.near && r.state === 'ready' && r.element.isConnected)
         .sort((a, b) => Math.abs(a.element.getBoundingClientRect().top) - Math.abs(b.element.getBoundingClientRect().top));
       if (!queue.length) break;
       const records: RecordState[] = []; let budget = 0;
       for (const r of queue) {
         const key = `${this.context()}:${r.segment.sourceHash}`;
         const value = this.memory.get(key);
-        if (value !== undefined) { r.node = appendTranslation(r.element, value, r.segment.protected); r.state = 'done'; continue; }
+        if (value !== undefined) { this.display(r, value); continue; }
         const chars = r.segment.text.length + JSON.stringify(r.segment.protected).length;
         if (budget + chars > MAX_BATCH_CHARS - 256 || records.length >= MAX_SEGMENTS) break;
         budget += chars; records.push(r); r.state = 'queued';
@@ -166,6 +205,20 @@ export class PageTranslator {
       void this.submit({ records, generation: this.generation });
     }
     this.render();
+  }
+  private async detectRecord(r: RecordState): Promise<void> {
+    r.state = 'detecting';
+    const generation = this.generation, segment = r.segment, context = this.context();
+    const skip = await alreadyTargetLanguage(visibleText(segment.text, segment.protected), this.settings, r.languageHint);
+    if (!this.enabled || generation !== this.generation || segment !== r.segment || context !== this.context() || !r.element.isConnected) return;
+    const current = snapshot(r.element);
+    if (current.sourceHash !== segment.sourceHash || current.text !== segment.text || (r.element.closest('[lang]')?.getAttribute('lang') || '') !== r.languageHint) { this.dirty.add(r.element); this.updateDirty(); return; }
+    r.state = skip ? 'skipped' : 'ready'; this.pump();
+  }
+  private display(r: RecordState, translated: string): void {
+    r.node?.remove(); r.node = undefined;
+    if (identicalTranslation(r.segment.text, translated, r.segment.protected)) { r.state = 'skipped'; return; }
+    r.node = appendTranslation(r.element, translated, r.segment.protected); r.state = 'done';
   }
   private async submit(batch: Batch): Promise<void> {
     this.pending++;
@@ -202,7 +255,10 @@ export class PageTranslator {
       const s = e.data.segment;
       if (batch.selection && batch.selection.id === s.id) {
         if (this.activeSelectionId === s.id) {
+          const selected = this.retrySelection;
+          if (!selected || !selected.range.commonAncestorContainer.isConnected || selected.range.toString().trim() !== selected.text) { this.clearSelection(); this.render(); return; }
           const literals = batch.selection.protected;
+          if (identicalTranslation(batch.selection.text, s.translation, literals)) { this.clearSelection(); this.render(); return; }
           const text = String(s.translation).replace(/⟦TMP:\d+⟧/g, token => literals[token] ?? token);
           this.selectionBusy = false; this.selectionError = ''; this.selectionResult = true;
           this.mascot?.showSelection(s.id, text);
@@ -213,7 +269,7 @@ export class PageTranslator {
         if (!r || !r.element.isConnected || r.segment.revision !== s.revision || r.segment.sourceHash !== s.sourceHash) return;
         const current = snapshot(r.element);
         if (current.text !== r.segment.text || current.sourceHash !== s.sourceHash || excluded(r.element, this.settings.excludedSelectors)) return;
-        try { r.node?.remove(); r.node = appendTranslation(r.element, s.translation, r.segment.protected); r.state = 'done'; }
+        try { this.display(r, s.translation); }
         catch (error) { r.state = 'failed'; this.error = error instanceof Error ? error.message : '译文格式无效。'; this.paused = true; this.render(); return; }
         this.memory.set(`${this.context()}:${r.segment.sourceHash}`, s.translation);
         if (this.memory.size > 500) this.memory.delete(this.memory.keys().next().value!);
@@ -233,17 +289,18 @@ export class PageTranslator {
   stateChanged(status?: Status, disconnected = false): void {
     if (status?.transportId && this.status?.transportId && status.transportId !== this.status.transportId) disconnected = true;
     if (status && this.status && (status.accountEpoch !== this.status.accountEpoch || status.activeKey !== this.status.activeKey)) {
-      this.stop(false); this.memory.clear(); this.error = '账号已变化，点击扩展中的翻译按钮重新开始。';
+      this.stop(false); this.memory.clear(); this.error = '连接已变化，点击页面 logo 重新开始。';
     }
-    this.status = status || this.status;
+    this.status = disconnected ? undefined : status || this.status;
     const active = this.status?.accounts.find(a => a.key === this.status?.activeKey);
     if (active && ['limited', 'ineligible', 'not_granted'].includes(active.plan)) {
       this.paused = true;
       this.error = active.authType === 'api_key'
-        ? active.plan === 'limited' ? 'OpenAI API 调用受限，请检查平台用量、余额或限流后重试。' : '当前 API key 无法调用模型，请在扩展中检查密钥和权限。'
+        ? active.plan === 'limited' ? '所选 API 调用受限，请检查服务商用量、余额或限流后重试。' : '当前 API key 无法调用模型，请在扩展中检查密钥和权限。'
         : active.plan === 'limited' ? '套餐调用受限，可查看 ChatGPT 用量设置后点击重试。' : '当前账号无法使用套餐调用，请在扩展中查看授权状态。';
     }
     if (disconnected) {
+      if (this.preparing) { this.stop(); this.error = '翻译会话已断开，请再次点击重新连接。'; this.render(); }
       if (!this.enabled && !this.selectionBusy) return;
       this.paused = true; this.error = '翻译会话已断开，结果未知。重新连接会话后可重试未完成段落。';
       if (this.selectionBusy) this.failSelection(this.error);
@@ -264,7 +321,12 @@ export class PageTranslator {
     const changed = JSON.stringify([this.settings.targetLanguage, this.settings.sourceLanguage, this.settings.models, this.settings.glossary, this.settings.excludedSelectors]) !==
       JSON.stringify([settings.targetLanguage, settings.sourceLanguage, settings.models, settings.glossary, settings.excludedSelectors]);
     this.settings = settings;
-    if (changed && this.enabled) void this.start();
+    const account = this.status?.accounts.find(a => a.key === this.status?.activeKey);
+    if ((this.enabled || this.selectionBusy) && (!account || !hasSharingConsent(settings, account))) { this.stop(); return; }
+    if (changed) {
+      if (this.enabled) void this.start();
+      else { this.generation++; this.activation++; this.preparing = false; this.mascot?.cancelSharing(); this.clearSelection(); void this.rpc('page.cancel').catch(() => {}); this.render(); }
+    }
   }
   private readSelection(): SelectedText {
     const selection = getSelection();
@@ -287,9 +349,13 @@ export class PageTranslator {
     this.retrySelection = this.lastSelection = { text, range: range.cloneRange() };
     this.mascot!.beginSelection(id, range); this.render();
     const generation = this.generation;
+    const context = this.context();
+    const skip = await alreadyTargetLanguage(text, this.settings, anchor.closest('[lang]')?.getAttribute('lang') || '');
+    if (generation !== this.generation || id !== this.activeSelectionId || context !== this.context()) return;
+    if (!range.commonAncestorContainer.isConnected || range.toString().trim() !== text || skip) { this.clearSelection(); this.render(); return; }
     try {
       const hello = await this.rpc('page.hello');
-      if (generation !== this.generation || id !== this.activeSelectionId) return;
+      if (generation !== this.generation || id !== this.activeSelectionId || context !== this.context() || range.toString().trim() !== text || !range.commonAncestorContainer.isConnected) return;
       this.documentId = hello.documentId;
     } catch (e) { if (id === this.activeSelectionId) this.failSelection(e instanceof Error ? e.message : '翻译会话连接失败。'); return; }
     await this.submit({ records: [], generation: this.generation, selection: { id, ...source } });
@@ -299,12 +365,9 @@ export class PageTranslator {
     this.mascot?.destroy();
     this.mascot = new TranslationMascot({
       toggle: () => {
-        if (!this.settings.acknowledgedSharing) { this.error = '请先在扩展中确认网页内容发送说明。'; this.render(); return; }
-        if (this.enabled && !this.paused) this.stop();
-        else if (this.status) void (this.enabled ? this.retry() : (async () => {
-          if (this.paused) await this.rpc('page.resume');
-          await this.control('start', this.status!, this.settings);
-        })()).catch(e => { this.error = e.message; this.render(); });
+        if (this.enabled || this.preparing) { this.stop(); return; }
+        const token = ++this.activation;
+        void this.prepare(token).then(ready => { if (ready) return this.start(); }).catch(e => { if (token === this.activation) { this.error = e.message; this.render(); } });
       },
       dismiss: () => { this.clearSelection(false); this.render(); },
       retry: () => { void this.retrySelected().catch(e => this.failSelection(e.message)); },
@@ -329,10 +392,12 @@ export class PageTranslator {
     if (id === this.activeSelectionId && selected === this.retrySelection) await this.translateSelection(selected);
   }
   private selectionEnd = (e: Event) => {
-    if (!this.settings.acknowledgedSharing || !this.status?.activeKey || this.paused || e.composedPath().some(n => n instanceof Element && n.hasAttribute(OWN))) return;
+    const account = this.status?.accounts.find(a => a.key === this.status?.activeKey);
+    if (!e.isTrusted || !this.enabled || !account || !hasSharingConsent(this.settings, account) || this.paused || e.composedPath().some(n => n instanceof Element && n.hasAttribute(OWN))) return;
     if (e.target instanceof Element && excluded(e.target, this.settings.excludedSelectors)) return;
     clearTimeout(this.selectionTimer);
     this.selectionTimer = setTimeout(() => {
+      if (!this.enabled) return;
       let selected: SelectedText; try { selected = this.readSelection(); } catch { return; }
       if (!this.readingRoot().contains(selected.range.commonAncestorContainer)) return;
       const old = this.lastSelection;
@@ -342,21 +407,21 @@ export class PageTranslator {
   };
   private selectionKeyUp = (e: KeyboardEvent) => { if (e.key === 'Shift' || e.shiftKey) this.selectionEnd(e); };
   private selectionShortcut = (e: KeyboardEvent) => {
-    if (e.altKey && e.code === 'KeyT' && !e.repeat && this.status) {
+    if (e.isTrusted && e.altKey && e.code === 'KeyT' && !e.repeat) {
       if (e.target instanceof Element && excluded(e.target, this.settings.excludedSelectors)) return;
       e.preventDefault(); clearTimeout(this.selectionTimer);
-      if (!this.settings.acknowledgedSharing) { this.error = '请先在扩展中确认网页内容发送说明。'; this.render(); return; }
-      void this.translateSelection().catch(error => { this.error = error.message; this.render(); });
+      const token = ++this.activation;
+      void this.prepare(token).then(ready => { if (ready) return this.translateSelection(); }).catch(error => { if (token === this.activation) { this.error = error.message; this.render(); } });
     }
   }
   private render(): void {
     if (!this.mascot) return;
     const r = [...this.records.values()]; const done = r.filter(x => x.state === 'done').length; const skipped = r.filter(x => x.state === 'skipped').length;
-    const busy = this.selectionBusy || this.enabled && !this.paused && (this.jobs.size + this.pending > 0 || r.some(x => x.state === 'queued' || x.state === 'idle' && x.near));
+    const busy = this.preparing || this.selectionBusy || this.enabled && !this.paused && (this.jobs.size + this.pending > 0 || r.some(x => ['queued', 'detecting', 'ready'].includes(x.state) || x.state === 'idle' && x.near));
     const error = this.activeSelectionId ? this.selectionError : this.error;
     const mode = error ? 'error' : busy ? 'loading' : this.enabled || this.selectionResult ? 'ready' : 'sleeping';
-    const summary = error || (this.selectionBusy ? '正在翻译选中文字' : this.selectionResult ? '选区译文已送达' : this.enabled ? `${done} / ${r.length - skipped} 段已翻译${busy ? '，正在翻译' : '，跟随阅读'}${skipped ? `，${skipped} 段已跳过` : ''}` : '翻译未开启，译译在睡觉');
-    this.mascot.update(mode, summary, this.activeSelectionId ? '点击收起并返回' : this.enabled && this.paused ? '点击重试' : this.enabled ? '点击恢复原文' : '点击开启整页翻译');
+    const summary = error || (this.selectionBusy ? '正在翻译选中文字' : this.selectionResult ? '选区译文已送达' : this.enabled ? `${done} / ${r.length - skipped} 段已翻译${busy ? '，正在翻译' : '，跟随阅读'}${skipped ? `，${skipped} 段已跳过` : ''}` : '翻译未开启');
+    this.mascot.update(mode, summary, this.enabled ? '点击关闭翻译并恢复原文' : this.preparing ? '点击取消' : '点击开启整页翻译', this.enabled);
   }
   private async retry(): Promise<void> {
     await this.rpc('page.resume');
@@ -371,6 +436,7 @@ export class PageTranslator {
 const global = globalThis as typeof globalThis & { __translateMyPage?: PageTranslator };
 if (chrome.runtime.id && !global.__translateMyPage) {
   const app = new PageTranslator(); global.__translateMyPage = app;
+  void app.initialize();
   chrome.runtime.onMessage.addListener((m, _sender, reply) => {
     if (m.type === 'page.control') { app.control(m.action, m.status, m.settings).then(() => reply({ ok: true })).catch(e => reply({ error: { code: e.code || 'page_error', message: e.message } })); return true; }
     if (m.type === 'translation.event') app.handleEvent(m.event);

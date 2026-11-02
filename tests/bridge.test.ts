@@ -37,7 +37,10 @@ test('only the owned session tab can attach; stale events are ignored and discon
   const pending = bridge.call('translation.submit'); await new Promise(resolve => setTimeout(resolve, 0));
   session.value.disconnect(); await assert.rejects(pending, (error: any) => error.code === 'session_disconnected');
   assert.equal(bridge.status, undefined); assert.equal(bridge.connection, 'disconnected'); assert.equal(disconnected, 1);
-  await assert.rejects(bridge.call('models.list'), (error: any) => error.code === 'session_required');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const missing = assert.rejects(bridge.call('models.list'), (error: unknown) => error instanceof Error && 'code' in error && error.code === 'session_required');
+  t.mock.timers.tick(3000);
+  await missing;
 });
 
 test('a suspended worker wakes the existing session before forwarding a new request', async t => {
@@ -53,4 +56,18 @@ test('a suspended worker wakes the existing session before forwarding a new requ
   t.after(() => { session.value.disconnect(); (globalThis as any).chrome = previous; });
   await Promise.all([bridge.connect(), bridge.connect()]);
   assert.equal(bridge.connection, 'ready'); assert.equal(wakes, 1); assert.equal(bridge.status!.accountEpoch, 99);
+});
+
+test('a cold session can finish connecting after its wake listener was initially absent', async t => {
+  const previous = globalThis.chrome, bridge = new SessionBridge(() => {}, () => {}), session = port();
+  Object.assign(globalThis, { chrome: { runtime: { id: 'test', getURL: (file: string) => `chrome-extension://test/${file}`,
+    sendMessage: async () => { throw new Error('Receiving end does not exist yet'); } } } });
+  t.after(() => { session.value.disconnect(); Object.assign(globalThis, { chrome: previous }); });
+  const connected = bridge.connect().then(() => true, () => false);
+  // Settle the rejected wake message before the session's initial hello.
+  await Promise.resolve();
+  bridge.attach(session.cast);
+  session.value.onMessage.emit({ v: 1, bootId: 'cold-session', seq: 1, event: 'hello', data: { accounts: [], accountEpoch: 100, authorizing: false } });
+  assert.equal(await connected, true);
+  assert.equal(bridge.connection, 'ready');
 });

@@ -52,12 +52,11 @@ export class SessionBridge {
     if (this.connecting) return this.connecting;
     // A visible session survives service-worker suspension. Wake its transport on demand.
     this.connecting = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new AppError('session_required', '请打开扩展中的“翻译会话”，登录 ChatGPT 或设置 OpenAI API key。')), 3000);
+      const timer = setTimeout(() => reject(new AppError('session_required', '请打开扩展中的“翻译会话”，登录 ChatGPT 或配置 API 服务商。')), 3000);
       this.ready = () => { clearTimeout(timer); resolve(); };
-      void chrome.runtime.sendMessage({ type: 'session.wake' }).catch(() => {
-        if (this.connection === 'ready') { clearTimeout(timer); resolve(); }
-        else { clearTimeout(timer); reject(new AppError('session_required', '请打开扩展中的“翻译会话”，登录 ChatGPT 或设置 OpenAI API key。')); }
-      });
+      // A newly opened session may not have installed its wake listener yet.
+      // Its initial hello completes the same handshake within the timeout.
+      void chrome.runtime.sendMessage({ type: 'session.wake' }).catch(() => {});
     }).finally(() => { this.connecting = undefined; this.ready = undefined; });
     return this.connecting;
   }

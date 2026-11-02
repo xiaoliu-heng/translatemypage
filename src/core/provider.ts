@@ -10,11 +10,11 @@ export function apiError(data: unknown, status?: number, requestId?: string, aut
   const code = error?.code ?? root?.code ?? error?.type;
   if (authType === 'api_key') {
     if (status === 401 || code === 'invalid_api_key' || code === 'invalid_grant')
-      return new AppError('reauth_required', 'API 密钥未被接受，请替换密钥后重试。', status, requestId);
+      return new AppError('reauth_required', 'API 密钥未被接受，请替换密钥后重试。', status);
     if (code === 'insufficient_quota' || code === 'billing_hard_limit_reached')
-      return new AppError('limited', 'OpenAI API 配额或计费余额不足，请在 API 平台检查账单和额度；ChatGPT 订阅不包含 API 费用。', status, requestId);
+      return new AppError('limited', '所选 API 服务商的配额或计费余额不足，请在服务商平台检查账单和额度。', status);
     if (status === 429 || code === 'rate_limit_exceeded')
-      return new AppError('limited', 'OpenAI API 请求受到速率或额度限制，请检查 API 平台限制后手动继续。', status, requestId);
+      return new AppError('limited', '所选 API 请求受到速率或额度限制，请检查服务商平台限制后手动继续。', status);
   } else {
     const known: Record<string, [string, string]> = {
       subscription_sharing_usage_limit_exceeded: ['limited', '套餐调用受限，请在 ChatGPT 用量设置中查看并手动继续。'],
@@ -30,7 +30,7 @@ export function apiError(data: unknown, status?: number, requestId?: string, aut
     status === 503 ? ['temporarily_unavailable', '模型服务暂时不可用。'] :
     status === 403 ? ['ineligible', authType === 'api_key' ? '此 API 密钥、项目或所在区域无权使用所选模型。' : '账号、工作区或所在区域暂不支持此请求。'] :
     ['provider_error', '模型请求失败，请检查模型选择或稍后重试。'];
-  return new AppError(entry[0], entry[1], status, requestId);
+  return new AppError(entry[0], entry[1], status, authType === 'api_key' ? undefined : requestId);
 }
 export async function consumeSSE(body: ReadableStream<Uint8Array>, signal?: AbortSignal, progress?: () => void, authType: AuthType = 'chatgpt'): Promise<string> {
   const reader = body.getReader(); const decoder = new TextDecoder();
@@ -68,6 +68,10 @@ export async function consumeSSE(body: ReadableStream<Uint8Array>, signal?: Abor
     }
     assert(completed, 'interrupted', '连接已中断，结果未知；可手动重试未完成段落。');
     return output;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error instanceof AppError) throw error;
+    throw new AppError('interrupted', '连接已中断，结果未知；可手动重试未完成段落。');
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 export function validateOutput(raw: string, segments: Segment[]): Map<string, string> {
@@ -89,7 +93,14 @@ export class OpenAIProvider {
     const credentials = await this.auth.access(key);
     // Detach native Window.fetch from this provider instance.
     const request = this.request;
-    const r = await request(`${RESOURCE}/models`, { credentials: 'omit', redirect: 'error', headers: { Authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(20_000) });
+    const base = credentials.authType === 'api_key' ? credentials.apiBaseUrl : RESOURCE;
+    let r: Response;
+    try {
+      r = await request(`${base}/models`, { credentials: 'omit', redirect: 'error', headers: { Authorization: `Bearer ${credentials.accessToken}` }, signal: AbortSignal.timeout(20_000) });
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      throw new AppError('provider_network', '无法连接所选模型服务，请检查网络、API 地址和网站访问权限。');
+    }
     const data: unknown = await r.json().catch(() => undefined);
     if (!r.ok) throw apiError(data, r.status, r.headers.get('x-request-id') || undefined, credentials.authType);
     const catalog = object(data);
@@ -127,9 +138,16 @@ export class OpenAIProvider {
     const request = this.request;
     // Only retry explicit pre-stream temporary rejection. An interrupted request has an unknown result.
     for (let attempt = 0; attempt < 3; attempt++) {
-      response = await request(`${RESOURCE}/responses`, { method: 'POST', credentials: 'omit', redirect: 'error', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: p.model, instructions, input: [{ role: 'user', content: JSON.stringify(content) }], store: false, stream: true }),
-        signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) });
+      try {
+        const base = credential.authType === 'api_key' ? credential.apiBaseUrl : RESOURCE;
+        response = await request(`${base}/responses`, { method: 'POST', credentials: 'omit', redirect: 'error', headers: { Authorization: `Bearer ${credential.accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: p.model, instructions, input: [{ role: 'user', content: JSON.stringify(content) }], store: false, stream: true }),
+          signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) });
+      } catch (error) {
+        signal.throwIfAborted();
+        if (error instanceof AppError) throw error;
+        throw new AppError('provider_network', '无法连接所选模型服务，请检查网络、API 地址和网站访问权限。');
+      }
       if (response.ok) break;
       const data = await response.json().catch(() => ({}));
       const error = apiError(data, response.status, response.headers.get('x-request-id') || undefined, credential.authType);

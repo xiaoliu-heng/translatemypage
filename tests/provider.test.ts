@@ -5,7 +5,8 @@ import { ApiKeyCredential, ChatGPTCredential } from '../src/core/auth';
 import { AppError } from '../src/shared/protocol';
 import { params } from './helpers';
 const oauthCredential: ChatGPTCredential = { authType: 'chatgpt', clientId: 'client', accessToken: 'secret', scopes: [], expiresAt: Infinity };
-const apiCredential: ApiKeyCredential = { authType: 'api_key', accessToken: 'private-api-key-DO-NOT-EXPOSE' };
+const apiCredential: ApiKeyCredential = { authType: 'api_key', accessToken: 'private-api-key-DO-NOT-EXPOSE',
+  apiBaseUrl: 'http://localhost:8787/gateway/v2' };
 function sse(events: unknown[], chunk = 7) {
   const bytes = new TextEncoder().encode(events.map(e => `data: ${JSON.stringify(e)}\r\n\r\n`).join(''));
   return new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < bytes.length; i += chunk) c.enqueue(bytes.slice(i, i + chunk)); c.close(); } });
@@ -61,7 +62,7 @@ test('an interrupted inference is never automatically repeated', async () => {
   await assert.rejects(provider.translate(params(), new AbortController().signal), (e: any) => e.code === 'interrupted'); assert.equal(calls, 1);
 });
 
-test('API key mode reads actual API model IDs and translates through Responses without inventing capabilities', async () => {
+test('API mode preserves the selected prefix and port for catalogs and Responses without inventing capabilities', async () => {
   let calls = 0;
   const request: typeof fetch = async function (this: unknown, input, init) {
     if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
@@ -69,10 +70,10 @@ test('API key mode reads actual API model IDs and translates through Responses w
     assert.equal(new Headers(init?.headers).get('Authorization'), `Bearer ${apiCredential.accessToken}`);
     assert.equal(init?.credentials, 'omit'); assert.equal(init?.redirect, 'error');
     if (String(input).endsWith('/models')) {
-      assert.equal(String(input), 'https://api.openai.com/v1/models');
+      assert.equal(String(input), 'http://localhost:8787/gateway/v2/models');
       return Response.json({ object: 'list', data: [{ id: 'gpt-4.1' }, { id: 'text-embedding-3-small' }] });
     }
-    assert.equal(String(input), 'https://api.openai.com/v1/responses');
+    assert.equal(String(input), 'http://localhost:8787/gateway/v2/responses');
     assert.equal(init?.method, 'POST');
     const body = JSON.parse(String(init?.body));
     assert.equal(body.model, 'gpt-4.1'); assert.equal(body.store, false); assert.equal(body.stream, true);
@@ -104,7 +105,7 @@ test('catalog parsing is selected by explicit credential type and rejects the ot
 test('API invalid-key and quota errors are safe and mode-aware before streaming and within error events', async () => {
   for (const [code, status, expected, message] of [
     ['invalid_api_key', 401, 'reauth_required', /替换密钥/],
-    ['insufficient_quota', 429, 'limited', /API 配额或计费/],
+    ['insufficient_quota', 429, 'limited', /配额或计费/],
   ] as const) {
     const providerBody = { error: { code, message: `provider echoes ${apiCredential.accessToken}` } };
     const safe = (error: unknown) => {
@@ -114,7 +115,8 @@ test('API invalid-key and quota errors are safe and mode-aware before streaming 
       assert.equal(error.message.includes('ChatGPT 用量设置'), false);
       return true;
     };
-    const rejected = new OpenAIProvider({ access: async () => apiCredential }, async () => Response.json(providerBody, { status }));
+    const rejected = new OpenAIProvider({ access: async () => apiCredential },
+      async () => Response.json(providerBody, { status, headers: { 'x-request-id': apiCredential.accessToken } }));
     await assert.rejects(rejected.models('api-account'), safe);
     await assert.rejects(rejected.translate(params(), new AbortController().signal), safe);
     for (const event of [
@@ -135,4 +137,27 @@ test('cancelled API translation never starts a request after credential access f
     async () => { calls++; return new Response(sse([done])); });
   await assert.rejects(provider.translate(params(), controller.signal), { name: 'AbortError' });
   assert.equal(calls, 0);
+});
+
+test('API network and stream diagnostics are generic and never retry or fall back to another recipient', async () => {
+  let calls = 0;
+  const provider = new OpenAIProvider({ access: async () => apiCredential }, async function (this: unknown, input, init) {
+    assert.ok(this === undefined || this === globalThis);
+    assert.ok(String(input).startsWith(`${apiCredential.apiBaseUrl}/`));
+    assert.equal(init?.redirect, 'error');
+    calls++;
+    throw new TypeError(`redirect target or failed URL contains ${apiCredential.accessToken}`);
+  });
+  const safe = (error: unknown) => {
+    assert.ok(error instanceof AppError); assert.equal(error.code, 'provider_network');
+    assert.equal(JSON.stringify(error.toJSON()).includes(apiCredential.accessToken), false);
+    return true;
+  };
+  await assert.rejects(provider.models('api'), safe);
+  await assert.rejects(provider.translate(params(), new AbortController().signal), safe);
+  assert.equal(calls, 2);
+  const broken = new OpenAIProvider({ access: async () => apiCredential }, async () => new Response(
+    new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error(apiCredential.accessToken)); } })));
+  await assert.rejects(broken.translate(params(), new AbortController().signal), (error: unknown) =>
+    error instanceof AppError && error.code === 'interrupted' && !JSON.stringify(error.toJSON()).includes(apiCredential.accessToken));
 });

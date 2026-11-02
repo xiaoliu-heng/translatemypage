@@ -2,9 +2,10 @@ import { AuthManager, verifyIdentity } from '../core/auth';
 import { OpenAIProvider } from '../core/provider';
 import { Scheduler } from '../core/scheduler';
 import { AppError, assert, PROTOCOL, publicError, RpcRequest } from '../shared/protocol';
-import { registrations, translationCache } from './storage';
+import { apiProfiles, registrations, translationCache } from './storage';
+import { providerHostPermission } from '../shared/providers';
 
-export interface SessionRuntime { complete(raw: string): Promise<void>; useApiKey(raw: string): Promise<void>; close(): void }
+export interface SessionRuntime { complete(raw: string): Promise<void>; useApiKey(raw: string, apiBaseUrl: string): Promise<void>; close(): void }
 export async function startSession(): Promise<SessionRuntime> {
   let release!: () => void, ready!: (value: SessionRuntime) => void, fail!: (error: unknown) => void;
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -14,19 +15,36 @@ export async function startSession(): Promise<SessionRuntime> {
     if (!lock) { fail(new AppError('session_exists', '已有一个翻译会话。请从扩展按钮打开原会话标签页。')); return; }
     let port: chrome.runtime.Port | undefined, stopped = false, seq = 0;
     let heartbeat: ReturnType<typeof setInterval> | undefined, reconnect: ReturnType<typeof setTimeout> | undefined;
+    let cleanup: (() => void) | undefined;
     const bootId = crypto.randomUUID();
     const emit = (event: string, data?: any, jobId?: string, accountEpoch?: number) => {
       try { port?.postMessage({ v: PROTOCOL, bootId, seq: ++seq, event, data, jobId, accountEpoch }); } catch {}
     };
     try {
-      const store = await registrations(), cache = translationCache(); await cache.init();
+      const store = await registrations(), profiles = await apiProfiles(), cache = translationCache(); await cache.init();
+      const nativeFetch = fetch;
+      const request: typeof fetch = async (input, init) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        signal?.throwIfAborted();
+        let permitted = false;
+        try { permitted = await chrome.permissions.contains({ origins: [providerHostPermission(url)] }); }
+        catch { throw new AppError('provider_permission_required', '请在设置中允许访问所选 API 服务商网站。'); }
+        assert(permitted, 'provider_permission_required', '请在设置中允许访问所选 API 服务商网站。');
+        signal?.throwIfAborted();
+        return nativeFetch(input, init);
+      };
       const auth = new AuthManager(store, switched => { if (switched) scheduler.cancelAll(); emit('status', auth.status()); },
-        { fetch, verify: verifyIdentity, open: async url => { await chrome.tabs.create({ url }); } });
-      const provider = new OpenAIProvider(auth), scheduler = new Scheduler(auth, provider, cache, emit);
+        { fetch: request, verify: verifyIdentity, open: async url => { await chrome.tabs.create({ url }); } }, profiles);
+      const provider = new OpenAIProvider(auth, request), scheduler = new Scheduler(auth, provider, cache, emit);
       const close = () => {
         if (stopped) return; stopped = true; clearInterval(heartbeat); clearTimeout(reconnect);
         scheduler.cancelAll(); auth.close(); port?.disconnect(); port = undefined; release();
       };
+      cleanup = close;
+      window.addEventListener('pagehide', close, { once: true });
+      await auth.restore();
+      assert(!stopped, 'session_closed', '翻译会话已结束。');
       async function handle(request: RpcRequest): Promise<unknown> {
         assert(!stopped && request.v === PROTOCOL && typeof request.id === 'string' && request.id.length <= 100, 'invalid_request', '会话消息无效。');
         const params = request.params || {};
@@ -36,7 +54,7 @@ export async function startSession(): Promise<SessionRuntime> {
           case 'account.select': return auth.select(params.accountKey);
           case 'account.logout': return auth.logout(params.accountKey);
           case 'models.list': {
-            const account = auth.active(); assert(account, 'signed_out', '请先登录 ChatGPT 或设置 OpenAI API key。');
+            const account = auth.active(); assert(account, 'signed_out', '请先登录 ChatGPT 或设置 API 密钥。');
             try { return await provider.models(account.key); }
             catch (error) {
               if (error instanceof AppError) {
@@ -80,10 +98,9 @@ export async function startSession(): Promise<SessionRuntime> {
       heartbeat = setInterval(() => emit('status', auth.status()), 20_000);
       const tab = await chrome.tabs.getCurrent();
       if (tab?.id !== undefined) await chrome.tabs.update(tab.id, { autoDiscardable: false });
-      window.addEventListener('pagehide', close, { once: true });
-      ready({ complete: raw => auth.complete(raw), useApiKey: raw => auth.useApiKey(raw), close });
+      ready({ complete: raw => auth.complete(raw), useApiKey: (raw, apiBaseUrl) => auth.useApiKey(raw, apiBaseUrl), close });
       await held;
-    } catch (error) { stopped = true; clearInterval(heartbeat); clearTimeout(reconnect); port?.disconnect(); fail(error); release(); }
+    } catch (error) { cleanup?.(); stopped = true; clearInterval(heartbeat); clearTimeout(reconnect); port?.disconnect(); fail(error); release(); }
   }).catch(fail);
   return initialized;
 }

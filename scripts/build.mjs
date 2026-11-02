@@ -28,7 +28,9 @@ const manifest = { manifest_version: 3, name: '__MSG_extensionName__', version, 
   homepage_url: 'https://github.com/xiaoliu-heng/translatemypage',
   description: '__MSG_extensionDescription__', permissions: ['activeTab', 'scripting', 'storage'],
   host_permissions: ['https://auth.openai.com/*', 'https://api.openai.com/*'],
-  content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; connect-src https://auth.openai.com https://api.openai.com" },
+  optional_host_permissions: ['http://*/*', 'https://*/*'],
+  content_scripts: [{ matches: ['http://*/*', 'https://*/*'], js: ['content.js'], css: ['content.css'], run_at: 'document_idle', all_frames: false }],
+  content_security_policy: { extension_pages: "script-src 'self'; object-src 'none'; connect-src https: http:" },
   incognito: 'not_allowed', background: { service_worker: 'background.js', type: 'module' }, action: { default_title: 'TranslateMyPage', default_popup: 'popup.html', default_icon: icons }, options_page: 'options.html' };
 await writeFile(join(extension, 'manifest.json'), JSON.stringify(manifest, null, 2));
 for (const file of ['popup.html', 'ui.css', 'content.css']) await copyFile(join(root, 'src/extension', file), join(extension, file));

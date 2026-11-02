@@ -5,8 +5,8 @@
     <header><div class="brand"><span class="mark">译</span><div><h1>TranslateMyPage</h1><p>AI 翻译 · 沉浸式双语阅读</p></div></div><button id="openOptions" class="icon" title="打开设置" aria-label="打开设置">⚙</button></header>
     <section class="card account-card">
       <div class="eyebrow"><span id="connectionDot" class="dot"></span><span id="connection">翻译会话未开启</span><button id="openSession" class="text-button">打开会话</button></div>
-      <p id="sessionHint" class="muted">打开翻译会话以登录 ChatGPT 或设置 API key。凭据仅留在会话内存；关闭或刷新会话页即清除。</p>
-      <section id="sessionIntro" hidden><h2>翻译会话</h2><p class="muted">在此连接 ChatGPT 或设置 API key，然后切回网页开启翻译。凭据仅在本页内存中保管，请保持打开。</p></section>
+      <p id="sessionHint" class="muted">打开翻译会话以连接 ChatGPT 或已保存的 API 服务商。ChatGPT 登录仅在会话内存中；API 密钥保存在本机。</p>
+      <section id="sessionIntro" hidden><h2>翻译会话</h2><p class="muted">在此连接服务商，然后切回网页开启翻译。请保持此页打开。重新打开时可恢复本机保存的 API 连接；ChatGPT 需重新登录。</p></section>
       <label for="accounts">翻译连接</label><select id="accounts"><option value="">尚未连接</option></select>
       <div class="status-line"><span id="identity">未登录</span><span id="plan">未授予套餐权限</span></div>
       <div class="row"><button id="signIn" class="secondary">Continue with ChatGPT</button><button id="addAccount" class="text-button" hidden>添加账号</button><button id="cancelAuth" class="text-button" hidden>取消登录</button><button id="logout" class="text-button" hidden>退出</button></div>
@@ -18,13 +18,18 @@
         <p class="muted">链接含一次性授权码。只粘贴到此处，请勿发送给别人或聊天机器人。</p>
       </section>
       <section class="api-key-section">
-        <button id="useApiKey" class="text-button" aria-expanded="false" aria-controls="apiKeyForm">使用 OpenAI API key</button>
-        <p class="muted">API 按用量单独计费，不包含在 ChatGPT 订阅中。</p>
-        <section id="apiKeyForm" hidden aria-label="设置 OpenAI API key">
-          <label for="apiKey">OpenAI API key</label>
+        <button id="useApiKey" class="text-button" aria-expanded="false" aria-controls="apiKeyForm">设置 API key 与服务商</button>
+        <p class="muted">支持 Responses API 兼容服务商，按服务商规则单独计费，不包含在 ChatGPT 订阅中。</p>
+        <section id="apiKeyForm" hidden aria-label="保存 API 连接">
+          <label for="apiBaseUrl">API 基础地址</label>
+          <input id="apiBaseUrl" type="url" maxlength="2048" value="https://api.openai.com/v1" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="apiBaseHint apiRecipient apiHttpWarning">
+          <p id="apiBaseHint" class="muted">使用服务商的完整基础地址（含 /v1 等路径）。模型列表和翻译分别调用此地址下的 /models 与 /responses。</p>
+          <p id="apiRecipient" class="provider-recipient"></p>
+          <p id="apiHttpWarning" class="notice" hidden>此地址使用 HTTP，密钥与翻译内容将以未加密的明文传输。仅在你信任的网络和服务商上使用。</p>
+          <label for="apiKey">API key</label>
           <input id="apiKey" type="password" maxlength="4096" autocomplete="off" spellcheck="false" autocapitalize="none" aria-describedby="apiKeyHint">
-          <p id="apiKeyHint" class="muted">仅保存在当前会话内存中，关闭或刷新即清除。设置不代表密钥已验证；读取模型或翻译时才会调用 OpenAI。</p>
-          <div class="row"><button id="connectApiKey" class="primary">设置 API key</button><button id="dismissApiKey" class="text-button">取消</button></div>
+          <p id="apiKeyHint" class="muted">密钥与地址保存在扩展本机数据库中，未加密、不同步；关闭或刷新后仍保留。每个地址需明确输入密钥，不会复用其他连接的密钥。保存不代表已验证，读取模型或翻译时才调用服务商。移除请使用“删除已保存的密钥”，这不会撤销服务商端的密钥。</p>
+          <div class="row"><button id="connectApiKey" class="primary">保存密钥与地址</button><button id="dismissApiKey" class="text-button">取消</button></div>
         </section>
       </section>
       <p id="notice" class="notice" hidden></p>
@@ -32,7 +37,7 @@
     <section class="card">
       <div class="row between"><label for="model">翻译模型</label><button id="refreshModels" class="text-button">刷新</button></div>
       <select id="model"><option value="">登录后读取可用模型</option></select>
-      <p id="modelHint" class="muted" hidden>请选择支持 Responses API 的文本模型。此列表来自 OpenAI，可能含非文本或不兼容模型；扩展不会自动代选。</p>
+      <p id="modelHint" class="muted" hidden>请选择支持 Responses API 的文本模型。此列表来自当前服务商，可能含非文本或不兼容模型；扩展不会自动代选。</p>
       <div class="languages"><div><label for="sourceLanguage">原文语言</label><select id="sourceLanguage"><option value="auto">自动识别</option><option value="en">英语</option><option value="zh-CN">简体中文</option><option value="ja">日语</option><option value="ko">韩语</option></select></div><span class="arrow">→</span><div><label for="targetLanguage">翻译为</label><select id="targetLanguage"><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option></select></div></div>
       <button id="translate" class="primary full" disabled>翻译当前网页 <span>↗</span></button>
       <div class="row actions"><button id="selection" class="secondary">翻译选中文字</button><button id="restore" class="secondary">显示原文</button></div>

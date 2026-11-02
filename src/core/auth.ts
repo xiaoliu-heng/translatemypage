@@ -1,6 +1,7 @@
 import { Account, AppError, assert, ChatGPTAccount, PlanState, Status } from '../shared/protocol';
 import { consumeCallback, PendingAuthorization, CallbackError } from './callback';
-import { digest, RegistrationStore } from './storage';
+import { ApiProfileData, ApiProfileStore, digest, RegistrationStore } from './storage';
+import { normalizeApiBaseUrl } from '../shared/providers';
 import { verifyIdentity } from './identity';
 export { verifyIdentity } from './identity';
 
@@ -12,7 +13,7 @@ export interface ChatGPTCredential {
   authType: 'chatgpt'; clientId: string; accessToken: string; refreshToken?: string; idToken?: string;
   scopes: string[]; expiresAt: number;
 }
-export interface ApiKeyCredential { authType: 'api_key'; accessToken: string }
+export interface ApiKeyCredential { authType: 'api_key'; accessToken: string; apiBaseUrl: string }
 export type Credential = ChatGPTCredential | ApiKeyCredential;
 export function credentialsFromResponse(t: unknown, clientId: string, previous?: ChatGPTCredential): ChatGPTCredential {
   assert(t && typeof t === 'object' && 'access_token' in t && 'expires_in' in t && 'token_type' in t,
@@ -48,7 +49,66 @@ export class AuthManager {
   private closed = false;
   private generation = 0;
   private signingOut = false;
-  constructor(private registrations: RegistrationStore, private changed: (switched: boolean) => void, private deps: AuthDependencies) {}
+  private profiles: ApiProfileData = { profiles: [] };
+  private writes: Promise<void> = Promise.resolve();
+  private pendingWrites = new Set<AbortController>();
+  constructor(private registrations: RegistrationStore, private changed: (switched: boolean) => void,
+    private deps: AuthDependencies, private profileStore: ApiProfileStore) {}
+  async restore(): Promise<void> {
+    const generation = this.generation;
+    let saved: unknown;
+    try { saved = await this.profileStore.read(); }
+    catch { throw new AppError('credential_storage_failed', '无法读取已保存的 API 配置，请检查扩展本地存储。'); }
+    assert(!this.closed && generation === this.generation, 'cancelled', '恢复 API 配置已取消。');
+    if (saved === undefined) return;
+    assert(saved !== null && typeof saved === 'object' && 'profiles' in saved && Array.isArray(saved.profiles),
+      'credential_storage_failed', '已保存的 API 配置无效，请检查扩展本地存储。');
+    const profiles: ApiProfileData['profiles'] = [];
+    for (const value of saved.profiles) {
+      assert(value !== null && typeof value === 'object' && 'key' in value && typeof value.key === 'string' &&
+        'apiBaseUrl' in value && typeof value.apiBaseUrl === 'string' && 'accessToken' in value && typeof value.accessToken === 'string',
+      'credential_storage_failed', '已保存的 API 配置无效。');
+      const apiBaseUrl = normalizeApiBaseUrl(value.apiBaseUrl);
+      assert(value.accessToken.length > 0 && value.accessToken.length <= 4096 && !/[\s\u0000-\u001f\u007f-\u009f]/u.test(value.accessToken) &&
+        value.key === await digest(['api_key', apiBaseUrl, value.accessToken]) && !profiles.some(profile => profile.key === value.key),
+      'credential_storage_failed', '已保存的 API 配置无效。');
+      profiles.push({ key: value.key, apiBaseUrl, accessToken: value.accessToken });
+    }
+    assert(!this.closed && generation === this.generation, 'cancelled', '恢复 API 配置已取消。');
+    const activeKey = 'activeKey' in saved && typeof saved.activeKey === 'string' ? saved.activeKey : undefined;
+    assert(activeKey === undefined || profiles.some(profile => profile.key === activeKey), 'credential_storage_failed', '已保存的 API 选择无效。');
+    this.profiles = { profiles, activeKey };
+    for (const profile of profiles) {
+      this.accounts.push({ authType: 'api_key', key: profile.key, apiBaseUrl: profile.apiBaseUrl,
+        name: `API · ${profile.apiBaseUrl}`, identity: 'signed_in', plan: 'authorized_unverified' });
+      this.credentials.set(profile.key, { authType: 'api_key', accessToken: profile.accessToken, apiBaseUrl: profile.apiBaseUrl });
+    }
+    this.activeKey = activeKey; this.epoch++; this.changed(true);
+  }
+  private persist(change: (previous: ApiProfileData) => ApiProfileData, valid: () => boolean, accepted: () => void): Promise<void> {
+    const abort = new AbortController(); this.pendingWrites.add(abort);
+    const work = this.writes.catch(() => {}).then(async () => {
+      assert(valid() && !abort.signal.aborted, 'cancelled', '保存 API 配置已取消。');
+      const previous = this.profiles, next = change(previous);
+      try {
+        await this.profileStore.write(next, abort.signal);
+        if (!valid() || abort.signal.aborted) {
+          // A cancellation can race the transaction's commit notification.
+          try { await this.profileStore.write(previous); }
+          catch { throw new AppError('credential_storage_failed', '取消配置时无法回退本地保存，请重新打开会话检查已保存的 API 配置。'); }
+          throw new AppError('cancelled', '保存 API 配置已取消。');
+        }
+        this.profiles = next;
+        accepted();
+      } catch (error) {
+        if (error instanceof AppError) throw error;
+        if (abort.signal.aborted) throw new AppError('cancelled', '保存 API 配置已取消。');
+        throw new AppError('credential_storage_failed', '无法保存 API 配置，请检查扩展本地存储后重试。');
+      }
+    }).finally(() => this.pendingWrites.delete(abort));
+    this.writes = work;
+    return work;
+  }
   status(): Status {
     return { accounts: this.accounts.map(a => ({ ...a })), activeKey: this.activeKey, accountEpoch: this.epoch,
       authorizing: !!this.attempt || !!this.preparing, signingOut: this.signingOut,
@@ -94,26 +154,28 @@ export class AuthManager {
     this.preparing = work;
     try { return await work; } finally { if (this.preparing === work) this.preparing = undefined; this.changed(false); }
   }
-  async useApiKey(raw: string): Promise<void> {
+  async useApiKey(raw: string, apiBaseUrl: string): Promise<void> {
     assert(!this.closed, 'session_closed', '翻译会话已结束，请重新打开。');
     assert(!this.signingOut, 'auth_busy', '正在退出，请稍候再连接。');
-    const secret = raw.trim();
+    const secret = raw.trim(), base = normalizeApiBaseUrl(apiBaseUrl);
     assert(secret.length > 0 && secret.length <= 4096 && !/[\s\u0000-\u001f\u007f-\u009f]/u.test(secret),
       'invalid_api_key', '请输入有效的 API 密钥；密钥不能包含空白或控制字符。');
     this.cancel();
     const generation = this.generation;
     await this.processing?.catch(() => {});
     assert(!this.closed && generation === this.generation, 'cancelled', '连接 API 密钥已取消。');
-    const key = await digest(['api_key', secret]);
-    assert(!this.closed && generation === this.generation, 'cancelled', '连接 API 密钥已取消。');
-    const existing = this.accounts.find(account => account.key === key);
-    const account: Account = { authType: 'api_key', key, name: existing?.name ||
-      `OpenAI API 密钥 ${this.accounts.filter(account => account.authType === 'api_key').length + 1}`,
-    identity: 'signed_in', plan: 'authorized_unverified' };
-    this.credentials.set(key, { authType: 'api_key', accessToken: secret });
-    if (existing) Object.assign(existing, account); else this.accounts.push(account);
-    this.activeKey = key; this.epoch++; this.notice = 'API 密钥已在本次会话中配置，尚未验证；API 使用单独计费。';
-    this.changed(true);
+    const key = await digest(['api_key', base, secret]);
+    const valid = () => !this.closed && generation === this.generation;
+    await this.persist(previous => ({ profiles: [...previous.profiles.filter(profile => profile.key !== key),
+      { key, apiBaseUrl: base, accessToken: secret }], activeKey: key }), valid, () => {
+      const account: Account = { authType: 'api_key', key, apiBaseUrl: base, name: `API · ${base}`,
+        identity: 'signed_in', plan: 'authorized_unverified' };
+      const existing = this.accounts.find(value => value.key === key);
+      this.credentials.set(key, { authType: 'api_key', accessToken: secret, apiBaseUrl: base });
+      if (existing) Object.assign(existing, account); else this.accounts.push(account);
+      this.activeKey = key; this.epoch++; this.notice = 'API 密钥已保存在此浏览器的扩展本地数据库中，尚未验证；API 使用单独计费。';
+      this.changed(true);
+    });
   }
   async complete(raw: string): Promise<void> {
     const attempt = this.attempt;
@@ -160,10 +222,12 @@ export class AuthManager {
         const account: Account = { authType: 'chatgpt', key, clientId: callback.clientId, subject: identity.sub, issuer: identity.iss,
           name: typeof identity.name === 'string' ? identity.name : '', email: typeof identity.email === 'string' ? identity.email : '',
           identity: 'signed_in', plan: credential.scopes.includes('chatgpt.tokens.use.direct') ? 'authorized_unverified' : 'not_granted' };
-        this.credentials.set(key, credential);
-        const existing = this.accounts.find(a => a.key === key); if (existing) Object.assign(existing, account); else this.accounts.push(account);
-        this.activeKey = key; this.epoch++; this.notice = undefined;
-        this.finish(attempt); this.changed(true);
+        await this.persist(previous => ({ profiles: previous.profiles }), () => !this.closed && !attempt.abort.signal.aborted, () => {
+          this.credentials.set(key, credential);
+          const existing = this.accounts.find(a => a.key === key); if (existing) Object.assign(existing, account); else this.accounts.push(account);
+          this.activeKey = key; this.epoch++; this.notice = undefined;
+          this.finish(attempt); this.changed(true);
+        });
       } catch (e) {
         const messages = { registration: '无法保存客户端注册，请检查扩展的本地存储空间后重新授权。',
           exchange: '授权码兑换未完成，请重新开始授权。', identity: '身份凭据验证未完成，请重新授权。', account: '无法完成账号绑定或保存，请检查扩展的本地存储后重新授权。' };
@@ -180,15 +244,19 @@ export class AuthManager {
   }
   cancel(): void {
     this.generation++; this.preparing = undefined;
+    for (const abort of this.pendingWrites) abort.abort();
     if (this.attempt) { this.attempt.abort.abort(); this.finish(this.attempt); }
     this.changed(false);
   }
   async select(key: string): Promise<Status> {
     assert(!this.signingOut, 'auth_busy', '正在退出，请稍候再切换账号。');
     assert(!this.closed, 'session_closed', '翻译会话已结束。');
-    this.find(key); this.cancel(); const generation = this.generation; await this.processing?.catch(() => {});
-    assert(!this.closed && generation === this.generation, 'cancelled', '切换账号已取消。');
-    this.activeKey = key; this.epoch++; this.changed(true); return this.status();
+    const account = this.find(key); this.cancel(); const generation = this.generation; await this.processing?.catch(() => {});
+    const valid = () => !this.closed && generation === this.generation;
+    await this.persist(previous => ({ profiles: previous.profiles, activeKey: account.authType === 'api_key' ? key : undefined }), valid, () => {
+      this.activeKey = key; this.epoch++; this.changed(true);
+    });
+    return this.status();
   }
   async mark(key: string, plan: PlanState, reauth = false): Promise<void> {
     const account = this.find(key); account.plan = plan; if (reauth) account.identity = 'reauth_required';
@@ -228,7 +296,10 @@ export class AuthManager {
     const existing = this.refreshes.get(key); if (existing) return existing;
     const work = (async () => {
       const saved = this.credentials.get(key); assert(saved, 'reauth_required', '会话已结束，请重新登录。');
-      if (saved.authType === 'api_key') return saved;
+      if (saved.authType === 'api_key') {
+        assert(account.authType === 'api_key' && saved.apiBaseUrl === account.apiBaseUrl, 'account_mismatch', 'API 配置与凭据不匹配。');
+        return saved;
+      }
       assert(account.authType === 'chatgpt', 'account_mismatch', '账号凭据类型不匹配。');
       assert(saved.scopes.includes('chatgpt.tokens.use.direct'), 'not_granted', '请先授权使用 ChatGPT 套餐。');
       if (saved.expiresAt > Date.now() + 60_000) return saved;
@@ -249,8 +320,22 @@ export class AuthManager {
     this.refreshes.set(key, work); return work;
   }
   async logout(key: string): Promise<{ revoked: boolean }> {
+    assert(!this.closed, 'session_closed', '翻译会话已结束。');
     assert(!this.signingOut, 'auth_busy', '正在退出，请稍候。');
     const account = this.find(key); this.signingOut = true; this.cancel(); await this.processing?.catch(() => {});
+    if (account.authType === 'api_key') {
+      const generation = this.generation;
+      try {
+        await this.persist(previous => ({ profiles: previous.profiles.filter(profile => profile.key !== key),
+          activeKey: previous.activeKey === key ? undefined : previous.activeKey }), () => !this.closed && generation === this.generation, () => {
+          this.credentials.delete(key); this.accounts = this.accounts.filter(value => value.key !== key);
+          if (this.activeKey === key) this.activeKey = undefined;
+          this.epoch++; this.notice = '已删除本地保存的 API 密钥；未撤销服务商平台上的密钥。';
+          this.changed(true);
+        });
+        return { revoked: false };
+      } finally { this.signingOut = false; this.changed(false); }
+    }
     account.identity = 'signed_out'; this.epoch++; this.changed(true);
     await this.refreshes.get(key)?.catch(() => {});
     const saved = this.credentials.get(key); let revoked = false;
@@ -271,11 +356,11 @@ export class AuthManager {
       }
     } catch { /* Always finish local sign-out. */ }
     this.credentials.delete(key); account.plan = 'not_granted';
-    this.notice = account.authType === 'api_key' ? '已从本次会话忘记 API 密钥；未撤销平台密钥。如需撤销，请在 OpenAI API 平台操作。'
-      : revoked ? undefined : '已退出本次会话，未确认远端撤销。可在 ChatGPT 设置中断开此应用。';
+    this.notice = revoked ? undefined : '已退出本次会话，未确认远端撤销。可在 ChatGPT 设置中断开此应用。';
     this.signingOut = false; this.changed(false); return { revoked };
   }
   close(): void {
-    this.closed = true; this.cancel(); this.credentials.clear(); this.accounts = []; this.activeKey = undefined; this.epoch++; this.changed(true);
+    this.closed = true; this.cancel(); this.credentials.clear(); this.accounts = []; this.profiles = { profiles: [] };
+    this.activeKey = undefined; this.epoch++; this.changed(true);
   }
 }

@@ -16,7 +16,7 @@ interface AccountState {
 export interface ChatGPTAccount extends AccountState {
   authType: 'chatgpt'; clientId: string; subject: string; issuer: string; email: string;
 }
-export interface ApiKeyAccount extends AccountState { authType: 'api_key' }
+export interface ApiKeyAccount extends AccountState { authType: 'api_key'; apiBaseUrl: string }
 export type Account = ChatGPTAccount | ApiKeyAccount;
 export interface Status {
   accounts: Account[]; activeKey?: string; accountEpoch: number;
@@ -29,11 +29,12 @@ export interface GlossaryTerm { source: string; target: string; hostname?: strin
 export interface Settings {
   targetLanguage: string; sourceLanguage: string;
   models: Record<string, string>; glossary: GlossaryTerm[]; glossaryVersion: number;
-  excludedSelectors: string; acknowledgedPlan: boolean; acknowledgedSharing: boolean;
+  excludedSelectors: string; acknowledgedPlan: boolean; acknowledgedSharing: boolean; sharingOrigin: string;
 }
 export const DEFAULT_SETTINGS: Settings = {
   targetLanguage: 'zh-CN', sourceLanguage: 'auto', models: {}, glossary: [],
-  glossaryVersion: 1, excludedSelectors: '', acknowledgedPlan: false, acknowledgedSharing: false,
+  glossaryVersion: 1,
+  excludedSelectors: '', acknowledgedPlan: false, acknowledgedSharing: false, sharingOrigin: 'https://api.openai.com',
 };
 export interface Segment {
   id: string; revision: number; sourceHash: string; text: string;

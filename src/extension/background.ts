@@ -1,4 +1,5 @@
 import { AppError, assert, DEFAULT_SETTINGS, SessionEvent, MAX_BATCH_CHARS, Model, publicError, Settings, TranslationParams } from '../shared/protocol';
+import { hasSharingConsent, providerHostPermission, providerOrigin } from '../shared/providers';
 import { SessionBridge } from './bridge';
 import { translationCache } from './storage';
 interface Page { tabId: number; frameId: number; documentId: string; pageKey: string; active: boolean }
@@ -19,17 +20,28 @@ function pageStatus() {
       ? { ...account, name: '', email: '', subject: '', issuer: '', clientId: '' }
       : { ...account, name: '' }) };
 }
-async function openSession(): Promise<void> {
+async function openSession(active = true): Promise<void> {
   const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.TAB], documentUrls: [chrome.runtime.getURL('session.html')] });
   const existing = contexts.find(context => context.tabId >= 0);
   if (existing) {
-    await chrome.tabs.update(existing.tabId, { active: true });
-    if (existing.windowId >= 0) await chrome.windows.update(existing.windowId, { focused: true });
-  } else await chrome.tabs.create({ url: chrome.runtime.getURL('session.html') });
+    if (active) {
+      await chrome.tabs.update(existing.tabId, { active: true });
+      if (existing.windowId >= 0) await chrome.windows.update(existing.windowId, { focused: true });
+    }
+  } else await chrome.tabs.create({ url: chrome.runtime.getURL('session.html'), active });
+}
+async function ensureSession(): Promise<void> {
+  if (bridge.connection === 'ready') return;
+  await openSession(false);
+  try { await bridge.connect(); }
+  catch (error) { await openSession(); throw error; }
 }
 async function settings(): Promise<Settings> { const s = await chrome.storage.local.get('settings'); return { ...DEFAULT_SETTINGS, ...(s.settings as Partial<Settings> || {}) }; }
 async function sendPage(p: Page, message: unknown): Promise<void> {
   try { await chrome.tabs.sendMessage(p.tabId, message, { documentId: p.documentId }); } catch { pages.delete(p.pageKey); }
+}
+function broadcastSettings(value: Settings): void {
+  for (const p of pages.values()) void sendPage(p, { type: 'settings.changed', settings: value });
 }
 function broadcastStatus(): void {
   const message = { type: 'state.changed', connection: bridge.connection, status: bridge.status };
@@ -57,12 +69,15 @@ function contentPage(sender: chrome.runtime.MessageSender): Page {
 function extensionUI(sender: chrome.runtime.MessageSender): boolean {
   return !!sender.url && [chrome.runtime.getURL('popup.html'), chrome.runtime.getURL('options.html'), chrome.runtime.getURL('session.html')].includes(sender.url.split(/[?#]/)[0]);
 }
+async function injectPage(tabId: number): Promise<void> {
+  await chrome.scripting.insertCSS({ target: { tabId, frameIds: [0] }, files: ['content.css'] });
+  await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, files: ['content.js'] });
+}
 async function actOnPage(action: string): Promise<any> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   assert(tab?.id !== undefined && !tab.incognito && /^https?:\/\//.test(tab.url || ''), 'unsupported_page', '请在普通 HTTP/HTTPS 网页上使用翻译。');
-  if (!['stop', 'idle'].includes(action)) await bridge.connect();
-  await chrome.scripting.insertCSS({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.css'] });
-  await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: [0] }, files: ['content.js'] });
+  if (!['stop', 'idle'].includes(action)) await ensureSession();
+  await injectPage(tab.id);
   return chrome.tabs.sendMessage(tab.id, { type: 'page.control', action, status: pageStatus(), settings: await settings() }, { frameId: 0 });
 }
 async function route(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
@@ -71,8 +86,24 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
     const page = contentPage(sender);
     switch (message.type) {
       case 'page.hello':
-        await bridge.connect().catch(() => {});
-        return { pageKey: page.pageKey, documentId: page.documentId, connection: bridge.connection, status: pageStatus() };
+        return { pageKey: page.pageKey, documentId: page.documentId, connection: bridge.connection, status: pageStatus(), settings: await settings() };
+      case 'page.prepare': {
+        await ensureSession();
+        const s = await settings(), account = bridge.status?.accounts.find(a => a.key === bridge.status?.activeKey);
+        let ready = !!account && account.identity === 'signed_in' && account.plan !== 'not_granted' && !!s.models[account.key];
+        if (ready && account?.authType === 'api_key')
+          ready = await chrome.permissions.contains({ origins: [providerHostPermission(account.apiBaseUrl)] });
+        if (!ready) await openSession();
+        return { pageKey: page.pageKey, documentId: page.documentId, connection: bridge.connection, status: pageStatus(), settings: s, ready };
+      }
+      case 'page.consent': {
+        const account = bridge.status?.accounts.find(a => a.key === bridge.status?.activeKey);
+        assert(account && account.identity === 'signed_in' && bridge.status?.accountEpoch === message.accountEpoch &&
+          message.origin === providerOrigin(account), 'stale_account', '提供商已变化，请重新确认内容发送。');
+        const s = { ...await settings(), acknowledgedSharing: true, sharingOrigin: providerOrigin(account) };
+        await chrome.storage.local.set({ settings: s }); broadcastSettings(s);
+        return { settings: s };
+      }
       case 'page.activity': page.active = message.active === true; return {};
       case 'page.cancel':
         if (bridge.connection === 'ready') await bridge.call('translation.cancel', { pageKey: page.pageKey });
@@ -83,6 +114,7 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
         await bridge.connect();
         const s = await settings(); const a = bridge.status?.accounts.find(x => x.key === bridge.status?.activeKey);
         assert(a && a.identity === 'signed_in', 'signed_out', '请先在扩展中登录 ChatGPT 或设置 OpenAI API key。');
+        assert(hasSharingConsent(s, a), 'sharing_required', '请先确认将内容发送给当前提供商。');
         const model = s.models[a.key]; assert(model, 'model_required', '请先在扩展中选择模型。');
         assert(message.accountEpoch === bridge.status!.accountEpoch && Number.isSafeInteger(message.generation), 'stale_account', '账号或页面设置已变化。');
         const hostname = new URL(sender.url!).hostname;
@@ -143,9 +175,19 @@ async function route(message: any, sender: chrome.runtime.MessageSender): Promis
       const s: Settings = { ...await settings(), ...message.settings };
       assert(typeof s.targetLanguage === 'string' && s.targetLanguage.length <= 40 && typeof s.sourceLanguage === 'string' && s.sourceLanguage.length <= 40 &&
         Array.isArray(s.glossary) && s.glossary.length <= 100 && s.glossary.every(t => typeof t.source === 'string' && t.source.length > 0 && t.source.length <= 200 && typeof t.target === 'string' && t.target.length > 0 && t.target.length <= 200 && (!t.hostname || /^[a-z0-9.-]+$/i.test(t.hostname))), 'invalid_settings', '语言或术语表格式无效。');
-      assert(typeof s.excludedSelectors === 'string' && s.excludedSelectors.length <= 2000, 'invalid_settings', '排除选择器过长。');
+      assert(typeof s.excludedSelectors === 'string' && s.excludedSelectors.length <= 2000 &&
+        typeof s.acknowledgedSharing === 'boolean' && typeof s.sharingOrigin === 'string', 'invalid_settings', '设置格式无效。');
+      let recipient: URL;
+      try { recipient = new URL(s.sharingOrigin); }
+      catch { throw new AppError('invalid_settings', '内容发送确认的提供商地址无效。'); }
+      assert((recipient.protocol === 'https:' || recipient.protocol === 'http:') && recipient.origin === s.sharingOrigin,
+        'invalid_settings', '内容发送确认必须绑定到提供商来源。');
+      if (message.settings?.acknowledgedSharing === true || message.settings?.sharingOrigin !== undefined && s.acknowledgedSharing) {
+        const account = bridge.status?.accounts.find(a => a.key === bridge.status?.activeKey);
+        assert(account && providerOrigin(account) === s.sharingOrigin, 'stale_account', '提供商已变化，请重新确认内容发送。');
+      }
       await chrome.storage.local.set({ settings: s });
-      for (const p of pages.values()) void sendPage(p, { type: 'settings.changed', settings: s });
+      broadcastSettings(s);
       return s;
     }
     default: throw new AppError('unknown_method', '不支持此操作。');
@@ -163,4 +205,9 @@ chrome.tabs.onRemoved.addListener(id => {
 chrome.tabs.onUpdated.addListener((id, change) => {
   if (change.status !== 'loading') return;
   for (const [key, p] of pages) if (p.tabId === id) { pages.delete(key); if (bridge.connection === 'ready') void bridge.call('translation.cancel', { pageKey: key }).catch(() => {}); }
+});
+chrome.runtime.onInstalled.addListener(() => {
+  void chrome.tabs.query({ url: ['http://*/*', 'https://*/*'] }).then(tabs => Promise.all(tabs
+    .filter(tab => tab.id !== undefined && !tab.incognito)
+    .map(tab => injectPage(tab.id!).catch(() => {}))));
 });

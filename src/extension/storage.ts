@@ -1,4 +1,4 @@
-import { newRegistration, RegistrationData, RegistrationStore, TranslationCache } from '../core/storage';
+import { ApiProfileStore, newRegistration, RegistrationData, RegistrationStore, TranslationCache } from '../core/storage';
 
 export async function registrations(): Promise<RegistrationStore> {
   const { oauthRegistration } = await chrome.storage.local.get('oauthRegistration');
@@ -14,6 +14,44 @@ export async function registrations(): Promise<RegistrationStore> {
   }
   const store: RegistrationStore = { data, save: () => chrome.storage.local.set({ oauthRegistration: data }) };
   await store.save(); return store;
+}
+export async function apiProfiles(): Promise<ApiProfileStore> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open('translatemypage-credentials', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('api-profiles');
+    request.onerror = () => reject(request.error);
+    let blocked = false;
+    request.onblocked = () => { blocked = true; reject(new Error('Credential database is blocked')); };
+    request.onsuccess = () => {
+      if (blocked) { request.result.close(); return; }
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
+  });
+  return {
+    async read() {
+      return new Promise<unknown>((resolve, reject) => {
+        const tx = db.transaction('api-profiles', 'readonly');
+        const request = tx.objectStore('api-profiles').get('profiles');
+        tx.oncomplete = () => resolve(request.result);
+        tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+      });
+    },
+    async write(data, signal) {
+      signal?.throwIfAborted();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('api-profiles', 'readwrite');
+        const abort = () => { try { tx.abort(); } catch { /* The commit notification may already be queued. */ } };
+        const finish = () => signal?.removeEventListener('abort', abort);
+        tx.oncomplete = () => { finish(); resolve(); };
+        tx.onerror = () => { finish(); reject(tx.error); };
+        tx.onabort = () => { finish(); reject(tx.error ?? new DOMException('Aborted', 'AbortError')); };
+        signal?.addEventListener('abort', abort, { once: true });
+        try { tx.objectStore('api-profiles').put(data, 'profiles'); }
+        catch (error) { abort(); finish(); reject(error); }
+      });
+    },
+  };
 }
 export function translationCache(): TranslationCache {
   let database: Promise<IDBDatabase> | undefined;

@@ -8,8 +8,8 @@ Build with `npm run package:edge`. Packages are under `release/0.2.1/edge/`. Use
 
 Before submission:
 
-1. Verify manual callback login, real token exchange, personal API-key Responses translation and their separate billing paths in the installed extension.
-2. Test connection switching, session closure, reauthorization/key re-entry, local-only API-key disconnect and no automatic replay after disconnection.
+1. Verify manual callback login, real token exchange, persistent API-key translation, custom Responses endpoints and their separate billing paths.
+2. Test explicit connection switching, key/base-URL restoration after session/browser restart, local key deletion, per-host permission denial, origin-specific content consent, no billing fallback and no replay of unknown results. Verify default logo start/stop and same-language suppression on mixed-language pages.
 3. Capture current-version screenshots. The existing `store/screenshots` images document the old architecture and must not be submitted for 0.2.1.
 4. Verify the public privacy/source URLs and developer account access.
 5. Copy the bilingual listing, privacy disclosures and reviewer instructions; confirm free distribution, then submit.

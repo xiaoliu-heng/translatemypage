@@ -1,10 +1,12 @@
 import { Account, AppError, DEFAULT_SETTINGS, Model, Settings, Status } from '../shared/protocol';
+import { DEFAULT_API_BASE_URL, hasSharingConsent, normalizeApiBaseUrl, providerHostPermission, providerOrigin } from '../shared/providers';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const mode = document.body.dataset.mode;
 let session: import('./session').SessionRuntime | undefined;
 let status: Status | undefined, settings: Settings = DEFAULT_SETTINGS;
 let models: Model[] = [], modelsAccount = '', loadingModelsAccount = '', modelsRequest = 0;
-let pendingAction = '', apiKeyPending = false;
+let pendingAction: { action: string; accountKey: string; epoch: number; origin: string } | undefined;
+let apiKeyPending = false;
 let settingsRevision = 0, savingSettings = 0;
 const pendingModels = new Map<string, string>();
 const identityLabels = { signed_out: '未登录', authorizing: '授权中', signed_in: '已登录', reauth_required: '需要重新授权' };
@@ -42,10 +44,29 @@ function renderModels(active: Account): void {
   else if (!values.length) values.push({ value: '', label: '当前账号没有可用模型' });
   fillSelect('model', values, pendingModels.get(active.key) ?? (settings.models[active.key] || (api ? '' : models[0]?.slug)));
 }
+function renderApiRecipient(): void {
+  try {
+    const base = normalizeApiBaseUrl($<HTMLInputElement>('apiBaseUrl').value);
+    $('apiRecipient').textContent = `密钥和 API 请求将发送至 ${new URL(base).origin}。`;
+    $('apiHttpWarning').hidden = !base.startsWith('http:');
+  } catch {
+    $('apiRecipient').textContent = '请输入完整的 HTTP 或 HTTPS API 基础地址。';
+    $('apiHttpWarning').hidden = true;
+  }
+}
+function requestProviderPermission(base: string): Promise<boolean> {
+  // Request directly in the Save/Refresh handler, before any await loses user activation.
+  return chrome.permissions.request({ origins: [providerHostPermission(base)] });
+}
 function showApiKeyForm(show: boolean): void {
   $<HTMLInputElement>('apiKey').value = '';
   $('apiKeyForm').hidden = !show;
   $('useApiKey').setAttribute('aria-expanded', String(show));
+  if (show) {
+    const active = status?.accounts.find(a => a.key === status?.activeKey);
+    $<HTMLInputElement>('apiBaseUrl').value = active?.authType === 'api_key' ? active.apiBaseUrl : DEFAULT_API_BASE_URL;
+    renderApiRecipient();
+  }
   if (show) $<HTMLInputElement>('apiKey').focus();
 }
 function renderStatus(): void {
@@ -56,7 +77,7 @@ function renderStatus(): void {
     if (active?.identity !== 'signed_in') modelsAccount = '';
   } else renderModels(active);
   fillSelect('accounts', status?.accounts.length ? status.accounts.map(a => ({
-    value: a.key, label: a.authType === 'api_key' ? `OpenAI API key · ${a.key.slice(-8)}` : `${a.name || a.email || 'ChatGPT'} · ${a.clientId.slice(-6)}`,
+    value: a.key, label: a.authType === 'api_key' ? `API · ${a.apiBaseUrl} · ${a.key.slice(-6)}` : `${a.name || a.email || 'ChatGPT'} · ${a.clientId.slice(-6)}`,
   })) : [{ value: '', label: '尚未连接' }], status?.activeKey);
   $('identity').textContent = active ? (api ? apiIdentityLabels : identityLabels)[active.identity] : '未登录';
   $('plan').textContent = active ? (api ? apiPlanLabels : planLabels)[active.plan] : '未授予套餐权限';
@@ -67,27 +88,33 @@ function renderStatus(): void {
   $('addAccount').textContent = '添加其他账号';
   $<HTMLButtonElement>('addAccount').disabled = !!status?.signingOut || apiKeyPending || mode === 'session' && !session;
   $<HTMLButtonElement>('logout').disabled = !!status?.signingOut || apiKeyPending;
-  $('logout').textContent = status?.signingOut ? (api ? '正在断开…' : '正在退出…') : api ? '断开（仅本会话）' : '退出';
+  $('logout').textContent = status?.signingOut ? (api ? '正在删除…' : '正在退出…') : api ? '删除已保存的密钥' : '退出';
   $<HTMLSelectElement>('accounts').disabled = !!status?.signingOut || apiKeyPending;
   $('callbackStep').hidden = mode !== 'session' || !status?.authorization;
   $<HTMLButtonElement>('completeAuth').disabled = !session || !!status?.authorization?.exchanging;
   $('completeAuth').textContent = status?.authorization?.exchanging ? '正在验证登录…' : '验证并完成登录';
   if (!status?.authorization) $<HTMLInputElement>('callbackUrl').value = '';
   $<HTMLButtonElement>('useApiKey').disabled = apiKeyPending || !!status?.authorizing || !!status?.signingOut || mode === 'session' && !session;
-  $<HTMLButtonElement>('connectApiKey').disabled = mode !== 'session' || !session || apiKeyPending;
+  $<HTMLButtonElement>('connectApiKey').disabled = mode !== 'session' || !session || apiKeyPending || !!status?.authorizing || !!status?.signingOut;
   $<HTMLButtonElement>('dismissApiKey').disabled = apiKeyPending;
   $<HTMLInputElement>('apiKey').disabled = apiKeyPending;
-  $('connectApiKey').textContent = apiKeyPending ? '正在设置…' : '设置 API key';
+  $<HTMLInputElement>('apiBaseUrl').disabled = apiKeyPending;
+  $('connectApiKey').textContent = apiKeyPending ? '正在保存…' : '保存密钥与地址';
   if (mode !== 'session') showApiKeyForm(false);
   $('notice').hidden = !status?.notice; $('notice').textContent = status?.notice || '';
   const usable = active?.identity === 'signed_in' && (api ? !!settings.models[active.key] : active.plan !== 'not_granted');
   for (const id of ['translate', 'selection', 'resume']) $<HTMLButtonElement>(id).disabled = !usable;
   $('modelHint').hidden = !api;
-  $('billingMethod').textContent = api ? 'OpenAI API 单独计费' : '使用你的 ChatGPT 套餐';
-  $<HTMLAnchorElement>('manageUsage').href = api ? 'https://platform.openai.com/usage' : 'https://chatgpt.com/settings/usage';
-  $('sharingBilling').textContent = api
-    ? '待翻译的段落、页面标题和命中的术语将发送给 OpenAI，使用当前 API key 按用量单独计费，不包含在 ChatGPT 订阅中。'
-    : '待翻译的段落、页面标题和命中的术语将发送给 OpenAI，使用你授权的 ChatGPT 套餐。';
+  const origin = active ? providerOrigin(active) : 'https://api.openai.com';
+  const official = origin === 'https://api.openai.com';
+  $('billingMethod').textContent = api ? `${new URL(origin).host} · API 单独计费` : '使用你的 ChatGPT 套餐';
+  $<HTMLAnchorElement>('manageUsage').href = api ? (official ? 'https://platform.openai.com/usage' : origin) : 'https://chatgpt.com/settings/usage';
+  $('manageUsage').textContent = api && !official ? '服务商网站 ↗' : '管理用量 ↗';
+  $('sharingBilling').textContent = `待翻译的段落、页面标题和命中的术语将发送至 ${origin}，${api ? '由此服务商使用当前 API key 按用量单独计费，不包含在 ChatGPT 订阅中。' : '使用你授权的 ChatGPT 套餐。'}`;
+  if (pendingAction && (pendingAction.accountKey !== active?.key || pendingAction.epoch !== status?.accountEpoch || pendingAction.origin !== origin)) {
+    pendingAction = undefined;
+    $<HTMLDialogElement>('sharingDialog').close();
+  }
   const planDialog = $<HTMLDialogElement>('planDialog');
   if (api && planDialog.open) planDialog.close();
   if (active?.authType === 'chatgpt' && active.identity === 'signed_in' && active.plan !== 'not_granted' && !settings.acknowledgedPlan && !planDialog.open) planDialog.showModal();
@@ -99,12 +126,17 @@ function renderSettings(): void {
   $<HTMLTextAreaElement>('glossary').value = settings.glossary.map(t => `${t.hostname ? `${t.hostname} | ` : ''}${t.source} = ${t.target}`).join('\n');
   $<HTMLInputElement>('excludedSelectors').value = settings.excludedSelectors;
 }
-async function refreshModels(): Promise<void> {
+async function refreshModels(requestPermission = false): Promise<void> {
   const active = status?.accounts.find(a => a.key === status?.activeKey);
   if (!active || active.identity !== 'signed_in') return;
   const request = ++modelsRequest, epoch = status?.accountEpoch, revision = settingsRevision, wasSaving = savingSettings > 0;
   loadingModelsAccount = active.key;
   try {
+    if (requestPermission && active.authType === 'api_key') {
+      const permission = requestProviderPermission(active.apiBaseUrl);
+      if (!await permission) throw new AppError('provider_permission_required', '未获得此 API 服务商的访问权限。请点击刷新后允许访问。');
+      if (request !== modelsRequest || status?.activeKey !== active.key || status?.accountEpoch !== epoch) return;
+    }
     const received: Model[] = await rpc('ui.models');
     if (request !== modelsRequest || status?.activeKey !== active.key || status?.accountEpoch !== epoch) return;
     const state = await rpc('ui.state');
@@ -133,8 +165,13 @@ async function save(patch: Partial<Settings>): Promise<void> {
   } finally { savingSettings--; }
 }
 async function pageAction(action: string): Promise<void> {
-  if (!settings.acknowledgedSharing && action !== 'stop') { pendingAction = action; $<HTMLDialogElement>('sharingDialog').showModal(); return; }
-  await rpc('ui.page', { action }); feedback(action === 'stop' ? '已恢复原文，小球休息中。' : '已开始，网页小球会显示翻译状态；选中文字可直接翻译。');
+  const active = status?.accounts.find(a => a.key === status?.activeKey);
+  if (action !== 'stop' && active && !hasSharingConsent(settings, active)) {
+    pendingAction = { action, accountKey: active.key, epoch: status!.accountEpoch, origin: providerOrigin(active) };
+    $<HTMLDialogElement>('sharingDialog').showModal(); return;
+  }
+  await rpc(action === 'retry' ? 'ui.resume' : 'ui.page', action === 'retry' ? {} : { action });
+  feedback(action === 'stop' ? '已恢复原文，小球休息中。' : '已开始，网页小球会显示翻译状态；选中文字可直接翻译。');
 }
 click('openSession', () => rpc('ui.openSession'));
 click('signIn', () => {
@@ -156,33 +193,51 @@ click('useApiKey', () => {
 click('dismissApiKey', () => { showApiKeyForm(false); $('useApiKey').focus(); });
 click('connectApiKey', async () => {
   const input = $<HTMLInputElement>('apiKey'); const raw = input.value; input.value = '';
-  if (mode !== 'session' || !session || apiKeyPending) return;
+  if (mode !== 'session' || !session || apiKeyPending || status?.authorizing || status?.signingOut) return;
+  let base: string;
+  try { base = normalizeApiBaseUrl($<HTMLInputElement>('apiBaseUrl').value); }
+  catch { feedback('API 基础地址无效。请使用完整的 HTTP(S) 地址，不含账号、密码、查询参数或片段。'); return; }
+  if (!raw.trim()) { feedback('请输入要保存在此地址下的 API key；不会复用其他连接的密钥。'); return; }
+  const epoch = status?.accountEpoch;
   apiKeyPending = true; renderStatus();
   try {
-    await session.useApiKey(raw);
+    const permission = requestProviderPermission(base);
+    if (!await permission) { feedback('未获得此 API 服务商的访问权限，密钥未保存。请重新输入密钥并允许访问。'); return; }
+    if (status?.authorizing || status?.signingOut || status?.accountEpoch !== epoch) {
+      feedback('连接已变更，密钥未保存。请重新输入密钥后保存。'); return;
+    }
+    await session.useApiKey(raw, base);
     showApiKeyForm(false);
     await load();
   } catch {
-    feedback('无法设置 API key。请检查密钥后重试；密钥不会显示或保存。');
+    feedback('无法保存 API key。请检查密钥、本地存储和服务商访问权限后重试；密钥不会显示。');
   } finally { apiKeyPending = false; }
 });
 $<HTMLInputElement>('apiKey').addEventListener('keydown', event => {
   if (event.key === 'Enter') { event.preventDefault(); $<HTMLButtonElement>('connectApiKey').click(); }
   if (event.key === 'Escape' && !apiKeyPending) { event.preventDefault(); showApiKeyForm(false); $('useApiKey').focus(); }
 });
+$<HTMLInputElement>('apiBaseUrl').addEventListener('input', renderApiRecipient);
 click('cancelAuth', () => rpc('ui.cancelAuth'));
 click('logout', () => rpc('ui.logout', { accountKey: status?.activeKey }));
-click('refreshModels', refreshModels);
+click('refreshModels', () => refreshModels(true));
 click('translate', () => pageAction('start'));
 click('selection', () => pageAction('selection'));
 click('restore', () => pageAction('stop'));
-click('resume', async () => {
-  if (!settings.acknowledgedSharing) { await pageAction('retry'); return; }
-  await rpc('ui.resume');
-});
+click('resume', () => pageAction('retry'));
 click('openOptions', () => chrome.runtime.openOptionsPage());
-click('confirmSharing', async () => { await save({ acknowledgedSharing: true }); $<HTMLDialogElement>('sharingDialog').close(); await pageAction(pendingAction); });
-click('cancelSharing', () => $<HTMLDialogElement>('sharingDialog').close());
+click('confirmSharing', async () => {
+  const pending = pendingAction;
+  const active = status?.accounts.find(a => a.key === status?.activeKey);
+  if (!pending || !active || active.key !== pending.accountKey || status?.accountEpoch !== pending.epoch || providerOrigin(active) !== pending.origin) return;
+  await save({ acknowledgedSharing: true, sharingOrigin: pending.origin });
+  if (pendingAction !== pending || status?.activeKey !== pending.accountKey || status?.accountEpoch !== pending.epoch) return;
+  $<HTMLDialogElement>('sharingDialog').close();
+  pendingAction = undefined;
+  await pageAction(pending.action);
+});
+click('cancelSharing', () => { pendingAction = undefined; $<HTMLDialogElement>('sharingDialog').close(); });
+$<HTMLDialogElement>('sharingDialog').addEventListener('cancel', () => { pendingAction = undefined; });
 click('confirmPlan', async () => { await save({ acknowledgedPlan: true }); $<HTMLDialogElement>('planDialog').close(); });
 click('clearCache', async () => { await rpc('ui.clearCache'); feedback('已清空本地译文缓存。'); });
 click('saveAdvanced', async () => {

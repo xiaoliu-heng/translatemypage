@@ -1,24 +1,24 @@
 TranslateMyPage: AI Immersive Bilingual Translation
 
 Short description
-Bilingual webpage and selected-text translation. ChatGPT sign-in or your OpenAI API key (billed separately). No helper.
+Bilingual webpage translation. ChatGPT or custom Responses API, locally saved keys, separate API billing. No helper.
 
 Description
 Translate webpages and selected text with the original alongside the translation. Free and open source under the MIT license.
 
 Preserve the original font, size, color, spacing, links, emphasis, inline code and line breaks. Translate headings, paragraphs, lists and tables; restore the original whenever you like.
 
-Select text and a draggable pet moves beside it with a pulsing loading light. A game-style dialogue shows the result. Sleeping eyes mean translation is off; a steady bulb means ready. Supports position memory, keyboard shortcuts, explicit retry and reduced motion.
+Ordinary HTTP/HTTPS pages show the translation logo by default, with translation initially off. Click to translate; click again to restore originals. Content already in the target language and identical output do not get duplicate translations. Selected text opens a nearby dialogue. Supports dragging, position memory, keyboard shortcuts, explicit retry and reduced motion.
 
-Authorize on OpenAI's official page to use your account's available models and authorized ChatGPT subscription quota without an API key. Alternatively, configure your own OpenAI API key in the session tab and explicitly choose a Responses-compatible text model. API requests use the Responses API and are billed separately from ChatGPT subscriptions. The extension never switches billing methods automatically.
+Authorize on OpenAI's official page to use available ChatGPT models and subscription quota. Alternatively, configure an OpenAI or custom Responses-compatible API base URL and key, then explicitly choose a compatible text model. API requests are billed separately by the selected provider. Billing methods never switch automatically.
 
 Installation and sign-in
 Install only the desktop browser extension; no native helper or Node.js runtime is required. Open the extension's Translation Session tab and start official sign-in. After authorization redirects to http://127.0.0.1:1455/auth/callback, the browser may show a connection error because no local listener is running. Copy the complete address-bar URL and paste it into the session page. The manual callback is a project-specific adaptation.
 
-Keep the session tab open. Closing or refreshing it, restarting the browser, or updating the extension clears in-memory credentials; authorize again or enter your API key next time. Tokens and keys are never persisted in browser storage. API-key disconnect only forgets the local credential; revoke the key separately on the OpenAI API platform.
+Running translations need the session tab. ChatGPT OAuth tokens stay only in memory; authorize again after closure or restart. API keys and base URLs persist unencrypted in extension-origin IndexedDB across closure, refresh and browser restart, without sync. Save only on trusted devices. Delete a saved key to remove its local connection; revoke the platform key separately. Custom HTTP endpoints transmit keys and content without encryption.
 
 Privacy
-Content sharing is explained before the first translation. Requests go directly to OpenAI, without a developer-operated inference proxy, advertising or analytics. Translations are cached locally by account and can be cleared. Incognito, PDF, cross-origin frames and complex Shadow DOM are outside the current scope.
+The default logo requires HTTP/HTTPS main-document content-script access. Article scanning and translation start only after activation; confirm the current recipient origin before sharing content. Requests go directly to your selected provider, without a developer-operated proxy, advertising or analytics. Translations are cached locally by connection; clearing cache does not delete keys. Incognito, PDF, cross-origin frames and complex Shadow DOM are outside the current scope.
 
 AI translations may contain errors; check the original.
 Source: https://github.com/xiaoliu-heng/translatemypage

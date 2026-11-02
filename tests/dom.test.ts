@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { DEFAULT_SETTINGS } from '../src/shared/protocol';
+import { DEFAULT_SETTINGS, Segment, Settings } from '../src/shared/protocol';
 import { account, until } from './helpers';
+// Deferred content imports exercise its bootstrap boundary only after DOM/Chrome globals exist.
 function dom(html: string) {
   const d = new JSDOM(`<!doctype html><html><head><title>Article</title></head><body>${html}</body></html>`, { url: 'https://example.com/article', pretendToBeVisual: true });
   const w = d.window;
@@ -102,7 +103,7 @@ test('page translator rejects recycled DOM results, observes new content, avoids
   const d = dom('<main><p id="source">Original sentence.</p></main>');
   const submissions: any[] = [];
   (globalThis as any).chrome = { runtime: { onMessage: { addListener() {} }, async sendMessage(m: any) {
-    if (m.type === 'page.hello') return { result: { documentId: 'doc-1', pageKey: 'page-1' } };
+    if (m.type === 'page.hello' || m.type === 'page.prepare') return { result: { documentId: 'doc-1', pageKey: 'page-1', ready: true, settings: { ...DEFAULT_SETTINGS, acknowledgedSharing: true } } };
     if (m.type === 'page.translate') { const jobId = `job-${submissions.length}`; submissions.push({ ...m, jobId }); return { result: { jobId } }; }
     return { result: {} };
   } } };
@@ -153,7 +154,7 @@ test('page translator rejects recycled DOM results, observes new content, avoids
 test('account changes and explicit cancellation discard late results', async () => {
   const d = dom('<main><p>Pending sentence.</p></main>'); let submission: any;
   (globalThis as any).chrome = { runtime: { onMessage: { addListener() {} }, async sendMessage(m: any) {
-    if (m.type === 'page.hello') return { result: { documentId: 'doc' } };
+    if (m.type === 'page.hello' || m.type === 'page.prepare') return { result: { documentId: 'doc', ready: true, settings: { ...DEFAULT_SETTINGS, acknowledgedSharing: true } } };
     if (m.type === 'page.translate') { submission = m; return { result: { jobId: 'pending' } }; }
     return { result: {} };
   } } };
@@ -169,7 +170,7 @@ test('account changes and explicit cancellation discard late results', async () 
 test('a late selection translation cannot overwrite a newer selection', async () => {
   const d = dom('<main><p id="first">First selection.</p><p id="second">Second selection.</p></main>'); const submissions: any[] = [];
   (globalThis as any).chrome = { runtime: { onMessage: { addListener() {} }, async sendMessage(m: any) {
-    if (m.type === 'page.hello') return { result: { documentId: 'doc' } };
+    if (m.type === 'page.hello' || m.type === 'page.prepare') return { result: { documentId: 'doc', ready: true, settings: { ...DEFAULT_SETTINGS, acknowledgedSharing: true } } };
     if (m.type === 'page.translate') { const jobId = `selection-${submissions.length}`; submissions.push({ ...m, jobId }); return { result: { jobId } }; }
     return { result: {} };
   } } };
@@ -190,12 +191,12 @@ test('a late selection translation cannot overwrite a newer selection', async ()
     assert.equal(mascot.shadowRoot!.querySelector<HTMLElement>('.dialog')!.hidden, false);
   } finally { app.dispose(); d.window.close(); }
 });
-test('a completed text selection starts the nearby mascot, deduplicates pointer events, retries failures and preserves private inputs', async () => {
+test('idle selection events never submit and explicit popup selection preserves private inputs', async () => {
   const d = dom('<main><p id="reading">A fresh selected sentence.</p><form><p id="private">A private form draft.</p></form></main>');
   const submissions: any[] = [];
   let resumed = 0;
   (globalThis as any).chrome = { runtime: { onMessage: { addListener() {} }, async sendMessage(m: any) {
-    if (m.type === 'page.hello') return { result: { documentId: 'selection-doc' } };
+    if (m.type === 'page.hello' || m.type === 'page.prepare') return { result: { documentId: 'selection-doc', ready: true, settings: { ...DEFAULT_SETTINGS, acknowledgedSharing: true } } };
     if (m.type === 'page.resume') resumed++;
     if (m.type === 'page.translate') { const jobId = `job-${submissions.length}`; submissions.push({ ...m, jobId }); return { result: { jobId } }; }
     return { result: {} };
@@ -210,13 +211,18 @@ test('a completed text selection starts the nearby mascot, deduplicates pointer 
   try {
     await app.control('idle', status, { ...DEFAULT_SETTINGS, acknowledgedSharing: true });
     const pet = document.querySelector<HTMLElement>('[data-tmp-owned="mascot"]')!, shadow = pet.shadowRoot!;
-    assert.equal(pet.dataset.state, 'sleeping'); select('reading'); await until(() => submissions.length === 1);
+    assert.equal(pet.dataset.state, 'sleeping'); select('reading');
+    await Promise.resolve(); assert.equal(submissions.length, 0);
+    await app.control('selection', status, { ...DEFAULT_SETTINGS, acknowledgedSharing: true });
+    assert.equal(submissions.length, 1);
     assert.equal(pet.dataset.state, 'loading'); assert.equal(shadow.querySelector<HTMLElement>('.dialog')!.hidden, true);
     select('reading'); await new Promise(r => setTimeout(r, 180)); assert.equal(submissions.length, 1);
     app.handleEvent({ v: 1, bootId: 'boot', seq: 1, jobId: submissions[0].jobId, accountEpoch: 1, event: 'failed', data: { error: { message: '连接中断，请重试。' } } });
     await until(() => !shadow.querySelector<HTMLElement>('.dialog')!.hidden);
     assert.equal(pet.dataset.state, 'error'); shadow.querySelector<HTMLButtonElement>('.retry')!.click();
-    await until(() => submissions.length === 2); assert.equal(pet.dataset.state, 'loading'); assert.equal(resumed, 1);
+    await Promise.resolve(); assert.equal(submissions.length, 1); assert.equal(resumed, 0);
+    await app.control('selection', status, { ...DEFAULT_SETTINGS, acknowledgedSharing: true });
+    assert.equal(submissions.length, 2);
     app.handleEvent({ v: 1, bootId: 'boot', seq: 2, jobId: submissions[1].jobId, accountEpoch: 1, event: 'batchCompleted', data: { document: { id: 'selection-doc', generation: submissions[1].generation }, segment: { ...submissions[1].segments[0], translation: '新的划词译文。' } } });
     await until(() => shadow.querySelector('.result')!.textContent === '新的划词译文。');
     assert.equal(pet.dataset.state, 'ready'); shadow.querySelector<HTMLButtonElement>('.close')!.click();
@@ -227,10 +233,10 @@ test('a completed text selection starts the nearby mascot, deduplicates pointer 
     app.stop(); assert.equal(pet.dataset.state, 'sleeping');
   } finally { app.dispose(); d.window.close(); }
 });
-test('clicking the mascot toggles page translation while stopping discards pending selection dialogs', async () => {
+test('synthetic mascot clicks cannot activate translation and stopping discards pending selection dialogs', async () => {
   const d = dom('<main><p>A short paragraph.</p></main>'); const submissions: any[] = [];
   (globalThis as any).chrome = { runtime: { onMessage: { addListener() {} }, async sendMessage(m: any) {
-    if (m.type === 'page.hello') return { result: { documentId: 'orb-doc' } };
+    if (m.type === 'page.hello' || m.type === 'page.prepare') return { result: { documentId: 'orb-doc', ready: true, settings: { ...DEFAULT_SETTINGS, acknowledgedSharing: true } } };
     if (m.type === 'page.translate') { const jobId = `orb-${submissions.length}`; submissions.push({ ...m, jobId }); return { result: { jobId } }; }
     return { result: {} };
   } } };
@@ -239,14 +245,146 @@ test('clicking the mascot toggles page translation while stopping discards pendi
   try {
     await app.control('idle', status, { ...DEFAULT_SETTINGS, acknowledgedSharing: true });
     const pet = document.querySelector<HTMLElement>('[data-tmp-owned="mascot"]')!, shadow = pet.shadowRoot!;
-    shadow.querySelector<HTMLButtonElement>('.orb')!.click(); await until(() => submissions.length === 1);
-    assert.equal(pet.dataset.state, 'loading');
-    shadow.querySelector<HTMLButtonElement>('.orb')!.click(); assert.equal(pet.dataset.state, 'sleeping');
+    shadow.querySelector<HTMLButtonElement>('.orb')!.click();
+    await Promise.resolve(); assert.equal(submissions.length, 0);
+    assert.equal(pet.dataset.state, 'sleeping');
     const range = document.createRange(); range.selectNodeContents(document.querySelector('p')!); d.window.getSelection()!.addRange(range);
     await app.control('selection', status, { ...DEFAULT_SETTINGS, acknowledgedSharing: true });
-    const pending = submissions[1]; app.stop();
+    const pending = submissions[0]; app.stop();
     app.handleEvent({ v: 1, bootId: 'boot', seq: 3, jobId: pending.jobId, accountEpoch: 1, event: 'batchCompleted', data: { document: { id: 'orb-doc', generation: pending.generation }, segment: { ...pending.segments[0], translation: '关闭后不能弹出。' } } });
     await new Promise(r => setTimeout(r, 520));
     assert.equal(pet.dataset.state, 'sleeping'); assert.equal(shadow.querySelector<HTMLElement>('.dialog')!.hidden, true);
+  } finally { app.dispose(); d.window.close(); }
+});
+
+type PageSubmission = { jobId: string; generation: number; segments: Segment[]; selection: boolean };
+const pageStatus = { accounts: [account()], activeKey: 'account-1', accountEpoch: 1, authorizing: false };
+const consentSettings = { ...DEFAULT_SETTINGS, acknowledgedSharing: true };
+function pageRuntime(detect: (text: string) => Promise<chrome.i18n.LanguageDetectionResult>, settings: Settings = consentSettings) {
+  const submissions: PageSubmission[] = [], messages: string[] = [];
+  Object.assign(globalThis, { chrome: { i18n: { detectLanguage: detect }, runtime: {
+    onMessage: { addListener() {} },
+    async sendMessage(message: { type: string; generation: number; segments: Segment[]; selection: boolean }) {
+      messages.push(message.type);
+      if (message.type === 'page.hello' || message.type === 'page.prepare') return { result: { documentId: 'language-doc', status: pageStatus, settings, ready: true } };
+      if (message.type === 'page.translate') {
+        const jobId = `language-${submissions.length}`;
+        submissions.push({ jobId, generation: message.generation, segments: message.segments, selection: message.selection });
+        return { result: { jobId } };
+      }
+      return { result: {} };
+    },
+  } } });
+  return { submissions, messages };
+}
+function detection(language: string, isReliable = true): chrome.i18n.LanguageDetectionResult {
+  return { isReliable, languages: [{ language, percentage: 100 }] };
+}
+test('initialization shows a singleton logo and remains passive through synthetic page actions', async () => {
+  const d = dom('<main><p>Idle readable content.</p></main>');
+  let detections = 0;
+  const { messages, submissions } = pageRuntime(async () => { detections++; return detection('en'); });
+  const { PageTranslator } = await import('../src/extension/content'); const app = new PageTranslator();
+  try {
+    const initial = app.initialize();
+    assert.equal(document.querySelectorAll('[data-tmp-owned="mascot"]').length, 1);
+    assert.equal(app.initialize(), initial);
+    await initial;
+    const range = document.createRange(); range.selectNodeContents(document.querySelector('p')!);
+    d.window.getSelection()!.addRange(range);
+    document.querySelector('p')!.dispatchEvent(new d.window.MouseEvent('pointerup', { bubbles: true }));
+    document.dispatchEvent(new d.window.KeyboardEvent('keydown', { altKey: true, code: 'KeyT', bubbles: true }));
+    document.querySelector('[data-tmp-owned="mascot"]')!.shadowRoot!.querySelector<HTMLButtonElement>('.orb')!.click();
+    await Promise.resolve();
+    assert.deepEqual(messages, ['page.hello']); assert.equal(detections, 0); assert.equal(submissions.length, 0);
+    assert.equal(document.querySelector('[data-tmp-owned="translation"]'), null);
+  } finally { app.dispose(); d.window.close(); }
+});
+test('mixed blocks skip target language before requests and cached identical outputs never render', async () => {
+  const d = dom('<main lang="zh-CN"><p>这是已经使用目标语言撰写的中文段落。</p><p>Only this foreign paragraph needs translation.</p></main>');
+  let detections = 0;
+  const { submissions } = pageRuntime(async text => { detections++; return detection(text.startsWith('这是') ? 'zh' : 'en'); });
+  const { PageTranslator } = await import('../src/extension/content'); const app = new PageTranslator();
+  try {
+    await app.control('start', pageStatus, consentSettings); await until(() => submissions.length === 1);
+    const request = submissions[0]; assert.equal(request.segments.length, 1);
+    assert.equal(request.segments[0].text, 'Only this foreign paragraph needs translation.');
+    app.handleEvent({ v: 1, bootId: 'boot', seq: 1, jobId: request.jobId, accountEpoch: 1, event: 'batchCompleted', data: {
+      document: { id: 'language-doc', generation: request.generation }, segment: { ...request.segments[0], translation: request.segments[0].text },
+    } });
+    app.handleEvent({ v: 1, bootId: 'boot', seq: 2, jobId: request.jobId, accountEpoch: 1, event: 'jobCompleted' });
+    assert.equal(document.querySelector('[data-tmp-owned="translation"]'), null);
+    app.stop(); await app.control('start', pageStatus, consentSettings);
+    await until(() => detections === 4); await Promise.resolve();
+    assert.equal(submissions.length, 1); assert.equal(document.querySelector('[data-tmp-owned="translation"]'), null);
+  } finally { app.dispose(); d.window.close(); }
+});
+test('stale detection rechecks changed content and changing target reevaluates skipped blocks', async () => {
+  const d = dom('<main><p>Old foreign source.</p></main>');
+  let resolveFirst!: (value: chrome.i18n.LanguageDetectionResult) => void, detections = 0;
+  const first = new Promise<chrome.i18n.LanguageDetectionResult>(resolve => { resolveFirst = resolve; });
+  const { submissions } = pageRuntime(async () => ++detections === 1 ? first : detection('zh'));
+  const { PageTranslator } = await import('../src/extension/content'); const app = new PageTranslator();
+  try {
+    await app.control('start', pageStatus, consentSettings); await until(() => detections === 1);
+    document.querySelector('p')!.textContent = '新的中文正文内容不应该发送翻译请求。';
+    resolveFirst(detection('en')); await until(() => detections === 2); await Promise.resolve();
+    assert.equal(submissions.length, 0);
+    app.settingsChanged({ ...consentSettings, targetLanguage: 'en-US' });
+    await until(() => submissions.length === 1);
+    assert.equal(submissions[0].segments[0].text, '新的中文正文内容不应该发送翻译请求。');
+    app.stop();
+    app.handleEvent({ v: 1, bootId: 'boot', seq: 1, jobId: submissions[0].jobId, accountEpoch: 1, event: 'batchCompleted', data: {
+      document: { id: 'language-doc', generation: submissions[0].generation }, segment: { ...submissions[0].segments[0], translation: 'Late result.' },
+    } });
+    assert.equal(document.querySelector('[data-tmp-owned="translation"]'), null);
+  } finally { app.dispose(); d.window.close(); }
+});
+test('stop invalidates pending preparation and selection language detection', async () => {
+  const d = dom('<main><p>Already selected source.</p></main>');
+  let resolveDetection!: (value: chrome.i18n.LanguageDetectionResult) => void, detecting = false;
+  const pending = new Promise<chrome.i18n.LanguageDetectionResult>(resolve => { resolveDetection = resolve; });
+  const { submissions } = pageRuntime(async () => { detecting = true; return pending; });
+  const { PageTranslator } = await import('../src/extension/content'); const app = new PageTranslator();
+  try {
+    const range = document.createRange(); range.selectNodeContents(document.querySelector('p')!); d.window.getSelection()!.addRange(range);
+    const selection = app.control('selection', pageStatus, consentSettings);
+    await until(() => detecting); app.stop(); resolveDetection(detection('en')); await selection;
+    assert.equal(submissions.length, 0);
+    const starting = app.control('start', pageStatus, consentSettings); app.stop(); await starting;
+    assert.equal(submissions.length, 0); assert.equal(document.querySelector('[data-tmp-owned="translation"]'), null);
+  } finally { app.dispose(); d.window.close(); }
+});
+test('explicit popup selection in the target language sends nothing and changed selections reject late output', async () => {
+  const d = dom('<main><p>这是已经使用中文写成的选区正文。</p></main>');
+  const { submissions } = pageRuntime(async text => detection(text.startsWith('这是') ? 'zh' : 'en'));
+  const { PageTranslator } = await import('../src/extension/content'); const app = new PageTranslator();
+  const select = () => { const range = document.createRange(); range.selectNodeContents(document.querySelector('p')!); d.window.getSelection()!.removeAllRanges(); d.window.getSelection()!.addRange(range); };
+  try {
+    select(); await app.control('selection', pageStatus, consentSettings); assert.equal(submissions.length, 0);
+    document.querySelector('p')!.textContent = 'Translate the selected source.'; select();
+    await app.control('selection', pageStatus, consentSettings); assert.equal(submissions.length, 1);
+    document.querySelector('p')!.textContent = 'Changed after submission.';
+    const request = submissions[0];
+    app.handleEvent({ v: 1, bootId: 'boot', seq: 1, jobId: request.jobId, accountEpoch: 1, event: 'batchCompleted', data: {
+      document: { id: 'language-doc', generation: request.generation }, segment: { ...request.segments[0], translation: '不能显示过期选区译文。' },
+    } });
+    assert.equal(document.querySelector('[data-tmp-owned="mascot"]')!.shadowRoot!.querySelector<HTMLElement>('.dialog')!.getAttribute('aria-hidden'), 'true');
+  } finally { app.dispose(); d.window.close(); }
+});
+
+test('restoring an idle disconnected session does not invalidate the next logo activation', async () => {
+  const d = dom('<main><p>Reconnect this article.</p></main>');
+  Object.assign(globalThis, { chrome: { runtime: { onMessage: { addListener() {} }, async sendMessage() {
+    return { result: { documentId: 'restored-doc', connection: 'ready', status: pageStatus, settings: consentSettings } };
+  } } } });
+  const { PageTranslator } = await import('../src/extension/content'), app = new PageTranslator();
+  try {
+    await app.initialize();
+    app.stateChanged(undefined, true);
+    app.stateChanged({ ...pageStatus, accountEpoch: pageStatus.accountEpoch + 1 });
+    const logo = document.querySelector<HTMLElement>('[data-tmp-owned="mascot"]')!;
+    assert.equal(logo.dataset.state, 'sleeping');
+    assert.equal(logo.shadowRoot!.querySelector('.orb')!.getAttribute('aria-pressed'), 'false');
   } finally { app.dispose(); d.window.close(); }
 });

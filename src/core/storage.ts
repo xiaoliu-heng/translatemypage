@@ -8,6 +8,13 @@ export interface RegistrationData {
 }
 // This store accepts registration metadata only. Credentials never enter it.
 export interface RegistrationStore { data: RegistrationData; save(): Promise<void> }
+export interface ApiProfile { key: string; apiBaseUrl: string; accessToken: string }
+export interface ApiProfileData { profiles: ApiProfile[]; activeKey?: string }
+// Secrets belong only in the extension-origin credential database, never preferences.
+export interface ApiProfileStore {
+  read(): Promise<unknown>;
+  write(data: ApiProfileData, signal?: AbortSignal): Promise<void>;
+}
 export function newRegistration(): RegistrationData {
   return { hostId: `urn:uuid:${crypto.randomUUID()}`, bindings: Object.create(null) };
 }

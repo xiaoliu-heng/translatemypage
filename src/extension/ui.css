@@ -2,3 +2,4 @@
 
 .callback-step{border-top:1px solid #dfe5d9;margin-top:16px;padding-top:18px}.callback-step ol{padding-left:20px;line-height:1.8;color:#60765e;font-size:12px}.callback-step li{margin-bottom:8px}.callback-step code{overflow-wrap:anywhere;font-size:11px}.callback-step .muted{margin-bottom:0}button:focus-visible{outline:2px solid #6c9a78;outline-offset:3px}
 .api-key-section{border-top:1px solid #dfe5d9;margin-top:16px;padding-top:12px}.api-key-section>.muted{margin:4px 0 0;color:#60765e}.api-key-section>button{font-size:12px;color:#285a46}.api-key-section [aria-label]{margin-top:16px}.api-key-section .row{margin-top:10px}.api-key-section #apiKeyHint{color:#60765e;margin:0 0 12px}#modelHint{margin:8px 0 0;color:#60765e}
+.provider-recipient{font-size:12px;line-height:1.7;color:#285a46;overflow-wrap:anywhere;margin:0 0 12px}#apiHttpWarning{margin:0 0 16px}#sharingBilling{overflow-wrap:anywhere}footer{gap:10px;flex-wrap:wrap}#billingMethod{overflow-wrap:anywhere}

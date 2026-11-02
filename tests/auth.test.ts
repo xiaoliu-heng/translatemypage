@@ -3,26 +3,32 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { generateKeyPair, SignJWT, exportJWK } from 'jose';
 import { AuthDependencies, AuthManager, ISSUER, REDIRECT_URI, SCOPES, verifyIdentity } from '../src/core/auth';
-import { newRegistration, RegistrationStore } from '../src/core/storage';
+import { ApiProfileData, ApiProfileStore, newRegistration, RegistrationStore } from '../src/core/storage';
+import { DEFAULT_API_BASE_URL } from '../src/shared/providers';
 import { deferred, until } from './helpers';
 import { AppError } from '../src/shared/protocol';
 
 const tokens = (extra: object = {}) => ({ access_token: 'test-access', refresh_token: 'test-refresh', id_token: 'test-id', expires_in: 3600, token_type: 'Bearer', scope: SCOPES, ...extra });
-function fixture(t: TestContext, overrides: Partial<AuthDependencies> = {}, saved?: RegistrationStore) {
+function fixture(t: TestContext, overrides: Partial<AuthDependencies> = {}, saved?: RegistrationStore, savedProfiles?: ApiProfileStore) {
   let opened!: URL, opens = 0;
   const snapshots: unknown[] = [];
   const store = saved || { data: newRegistration(), save: async () => { snapshots.push(structuredClone(store.data)); } };
   const deps: AuthDependencies = { open: async url => { opened = new URL(url); opens++; },
     verify: async (_token, client, nonce) => { assert.equal(client, 'oaiapp_issued'); if (nonce) assert.equal(nonce, opened.searchParams.get('nonce')); return { sub: 'user-1', iss: ISSUER, email: 'test@example.com' }; },
     fetch: (async () => Response.json(tokens())) as typeof fetch, ...overrides };
-  const auth = new AuthManager(store, () => {}, deps);
+  let persisted: ApiProfileData | undefined;
+  const profiles: ApiProfileStore = savedProfiles ?? {
+    read: async () => structuredClone(persisted),
+    write: async (data, signal) => { signal?.throwIfAborted(); persisted = structuredClone(data); },
+  };
+  const auth = new AuthManager(store, () => {}, deps, profiles);
   t.after(() => auth.close());
   const callback = (fields: Record<string, string> = {}) => {
     const url = new URL(opened.searchParams.get('redirect_uri')!);
     for (const [name, value] of Object.entries({ state: opened.searchParams.get('state')!, code: 'one-time-code', client_id: 'oaiapp_issued', ...fields })) url.searchParams.set(name, value);
     return url.toString();
   };
-  return { auth, store, snapshots, callback, opened: () => opened, opens: () => opens };
+  return { auth, store, profiles, snapshots, callback, opened: () => opened, opens: () => opens };
 }
 
 test('manual OAuth binds the full loopback URI, PKCE and nonce; duplicate clicks and callbacks exchange once', async t => {
@@ -185,18 +191,18 @@ test('registration storage errors are identified before sending a one-time code 
   assert.equal(requests, 0); assert(f.auth.status().notice!.includes('auth_registration_failed'));
 });
 
-test('API keys stay in local credentials, never in public status or registration storage, and disconnect without OAuth', async t => {
+test('API keys persist only in the credential store, never public status or registration preferences, and delete without OAuth', async t => {
   let requests = 0;
   const f = fixture(t, { fetch: async () => { requests++; throw new Error('OAuth must not be used'); } });
   const before = JSON.stringify(f.store.data);
   const secret = 'personal-key-PRIVATE-KEY-MATERIAL';
-  await f.auth.useApiKey(`  ${secret}  `);
+  await f.auth.useApiKey(`  ${secret}  `, DEFAULT_API_BASE_URL);
   const account = f.auth.active()!;
   assert.equal(account.authType, 'api_key'); assert.equal(account.identity, 'signed_in');
   assert.equal(account.plan, 'authorized_unverified');
   assert.equal('clientId' in account, false); assert.equal('email' in account, false);
   assert.equal('subject' in account, false); assert.equal('issuer' in account, false);
-  assert.deepEqual(await f.auth.access(account.key), { authType: 'api_key', accessToken: secret });
+  assert.deepEqual(await f.auth.access(account.key), { authType: 'api_key', accessToken: secret, apiBaseUrl: DEFAULT_API_BASE_URL });
   const publicData = JSON.stringify({ status: f.auth.status(), registrations: f.store.data, snapshots: f.snapshots });
   assert.equal(publicData.includes(secret), false); assert.equal(publicData.includes('PRIVATE-KEY-MATERIAL'), false);
   assert.equal(f.snapshots.length, 0);
@@ -204,37 +210,46 @@ test('API keys stay in local credentials, never in public status or registration
   await f.auth.mark(account.key, 'last_request_succeeded');
   assert.equal(f.auth.status().notice, undefined);
   assert.equal((await f.auth.logout(account.key)).revoked, false);
-  assert.equal(f.auth.active()!.identity, 'signed_out'); assert.equal(f.auth.active()!.plan, 'not_granted');
-  await assert.rejects(f.auth.access(account.key), (error: unknown) => error instanceof AppError && error.code === 'reauth_required');
-  assert.match(f.auth.status().notice!, /未撤销平台密钥/);
+  assert.equal(f.auth.active(), undefined); assert.deepEqual(f.auth.status().accounts, []);
+  await assert.rejects(f.auth.access(account.key), (error: unknown) => error instanceof AppError && error.code === 'account_missing');
+  const reopened = fixture(t, {}, f.store, f.profiles); await reopened.auth.restore();
+  assert.deepEqual(reopened.auth.status().accounts, []);
   assert.equal(requests, 0); assert.equal(JSON.stringify(f.store.data), before);
 });
 
-test('API identities are stable for reused keys and isolate distinct keys across account switches and runtimes', async t => {
+test('API identities restore explicit selection and isolate the same key on different providers', async t => {
   const f = fixture(t);
-  await f.auth.useApiKey('first-personal-key'); const first = f.auth.active()!.key;
-  await f.auth.useApiKey('second-personal-key'); const second = f.auth.active()!.key;
+  await f.auth.useApiKey('first-personal-key', DEFAULT_API_BASE_URL); const first = f.auth.active()!.key;
+  await f.auth.useApiKey('second-personal-key', DEFAULT_API_BASE_URL); const second = f.auth.active()!.key;
   assert.notEqual(first, second); assert.equal(f.auth.status().accounts.length, 2);
   await f.auth.select(first);
   assert.equal((await f.auth.access(first)).accessToken, 'first-personal-key');
-  await f.auth.useApiKey(' second-personal-key ');
+  await f.auth.useApiKey(' second-personal-key ', DEFAULT_API_BASE_URL);
   assert.equal(f.auth.active()!.key, second); assert.equal(f.auth.status().accounts.length, 2);
-  await f.auth.logout(second); await f.auth.useApiKey('second-personal-key');
+  await f.auth.logout(second); await f.auth.useApiKey('second-personal-key', DEFAULT_API_BASE_URL);
   assert.equal(f.auth.active()!.key, second); assert.equal(f.auth.status().accounts.length, 2);
   f.auth.close();
-  const next = fixture(t, {}, f.store);
-  assert.deepEqual(next.auth.status().accounts, []);
-  await assert.rejects(next.auth.access(first));
-  await next.auth.useApiKey('first-personal-key'); assert.equal(next.auth.active()!.key, first);
+  const next = fixture(t, {}, f.store, f.profiles); await next.auth.restore();
+  assert.equal(next.auth.active()!.key, second); assert.equal(next.auth.status().accounts.length, 2);
+  assert.equal((await next.auth.access(first)).accessToken, 'first-personal-key');
+  await next.auth.useApiKey('first-personal-key', 'http://localhost:8741/gateway/v2///');
+  const custom = next.auth.active()!;
+  assert.notEqual(custom.key, first);
+  assert.equal((await next.auth.access(custom.key)).authType, 'api_key');
+  const credential = await next.auth.access(custom.key);
+  assert.equal(credential.authType === 'api_key' && credential.apiBaseUrl, 'http://localhost:8741/gateway/v2');
+  await next.auth.logout(custom.key);
+  const reopened = fixture(t, {}, f.store, f.profiles); await reopened.auth.restore();
+  assert.equal(reopened.auth.active(), undefined); assert.equal(reopened.auth.status().accounts.length, 2);
 });
 
 test('invalid API key input leaves the active credential and pending OAuth unchanged without assuming a key prefix', async t => {
   const f = fixture(t);
-  await f.auth.useApiKey('not-an-sk-prefixed-key');
+  await f.auth.useApiKey('not-an-sk-prefixed-key', DEFAULT_API_BASE_URL);
   const account = f.auth.active()!;
   await f.auth.begin(); const authorization = f.auth.status().authorization;
   for (const raw of ['', ' \t\n ', 'key with space', 'key\twith-tab', 'key\nwith-newline', 'key\u0000control', 'key\u007fcontrol', 'x'.repeat(4097)]) {
-    await assert.rejects(f.auth.useApiKey(raw), (error: unknown) => error instanceof AppError && error.code === 'invalid_api_key');
+    await assert.rejects(f.auth.useApiKey(raw, DEFAULT_API_BASE_URL), (error: unknown) => error instanceof AppError && error.code === 'invalid_api_key');
     assert.equal(f.auth.active()!.key, account.key);
     assert.equal((await f.auth.access(account.key)).accessToken, 'not-an-sk-prefixed-key');
     assert.deepEqual(f.auth.status().authorization, authorization);
@@ -245,7 +260,7 @@ test('API account reauthorization never opens OAuth and mixed account switching 
   const f = fixture(t);
   await f.auth.begin(); await f.auth.complete(f.callback()); const chatgpt = f.auth.active()!.key;
   assert.equal(f.auth.active()!.authType, 'chatgpt');
-  await f.auth.useApiKey('personal-key'); const api = f.auth.active()!.key;
+  await f.auth.useApiKey('personal-key', DEFAULT_API_BASE_URL); const api = f.auth.active()!.key;
   await assert.rejects(f.auth.begin(api), (error: unknown) => error instanceof AppError && error.code === 'invalid_auth_type');
   assert.equal(f.opens(), 1);
   await f.auth.select(chatgpt); assert.equal((await f.auth.access(chatgpt)).accessToken, 'test-access');
@@ -256,7 +271,7 @@ test('API account reauthorization never opens OAuth and mixed account switching 
 test('connecting an API key cancels OAuth preparation and does not leave a usable callback', async t => {
   const f = fixture(t);
   const preparing = f.auth.begin();
-  const connecting = f.auth.useApiKey('personal-key');
+  const connecting = f.auth.useApiKey('personal-key', DEFAULT_API_BASE_URL);
   await assert.rejects(preparing, (error: unknown) => error instanceof AppError && error.code === 'cancelled');
   await connecting;
   assert.equal(f.opens(), 0); assert.equal(f.auth.status().authorizing, false);
@@ -271,7 +286,7 @@ test('API connection waits for cancelled in-flight OAuth processing and discards
   await f.auth.begin(); const completing = f.auth.complete(f.callback());
   await until(() => requested);
   const rejected = assert.rejects(completing);
-  const connecting = f.auth.useApiKey('personal-key');
+  const connecting = f.auth.useApiKey('personal-key', DEFAULT_API_BASE_URL);
   assert.equal(f.auth.active(), undefined);
   gate.resolve(Response.json(tokens())); await rejected; await connecting;
   assert.equal(f.auth.status().accounts.length, 1);
@@ -282,7 +297,7 @@ test('API connection waits for cancelled in-flight OAuth processing and discards
 test('cancel, close, account switch, OAuth and replacement key all invalidate an API digest already in flight', async t => {
   for (const action of ['cancel', 'close', 'select', 'oauth', 'replace'] as const) {
     const f = fixture(t);
-    await f.auth.useApiKey('existing-personal-key'); const existing = f.auth.active()!.key;
+    await f.auth.useApiKey('existing-personal-key', DEFAULT_API_BASE_URL); const existing = f.auth.active()!.key;
     const original = crypto.subtle.digest;
     const gate = deferred<void>(); let started = false;
     crypto.subtle.digest = async function (algorithm, data) {
@@ -290,14 +305,14 @@ test('cancel, close, account switch, OAuth and replacement key all invalidate an
       return original.call(this, algorithm, data);
     };
     try {
-      const connecting = f.auth.useApiKey('cancelled-personal-key');
+      const connecting = f.auth.useApiKey('cancelled-personal-key', DEFAULT_API_BASE_URL);
       const rejected = assert.rejects(connecting, (error: unknown) => error instanceof AppError && error.code === 'cancelled');
       await until(() => started);
       if (action === 'cancel') f.auth.cancel();
       else if (action === 'close') f.auth.close();
       else if (action === 'select') await f.auth.select(existing);
       else if (action === 'oauth') await f.auth.begin();
-      else await f.auth.useApiKey('replacement-personal-key');
+      else await f.auth.useApiKey('replacement-personal-key', DEFAULT_API_BASE_URL);
       gate.resolve(); await rejected;
       if (action === 'close') assert.deepEqual(f.auth.status().accounts, []);
       else {
@@ -311,6 +326,122 @@ test('cancel, close, account switch, OAuth and replacement key all invalidate an
 
 test('a closed session rejects API configuration without restoring any account or registration secret', async t => {
   const f = fixture(t); f.auth.close();
-  await assert.rejects(f.auth.useApiKey('personal-key'), (error: unknown) => error instanceof AppError && error.code === 'session_closed');
+  await assert.rejects(f.auth.useApiKey('personal-key', DEFAULT_API_BASE_URL), (error: unknown) => error instanceof AppError && error.code === 'session_closed');
   assert.deepEqual(f.auth.status().accounts, []); assert.equal(f.snapshots.length, 0);
+});
+
+test('successful OAuth and explicit ChatGPT selection clear automatic API billing without deleting profiles', async t => {
+  const f = fixture(t);
+  await f.auth.useApiKey('saved-api-key', DEFAULT_API_BASE_URL);
+  const api = f.auth.active()!.key;
+  await f.auth.begin(); f.auth.cancel();
+  const cancelled = fixture(t, {}, f.store, f.profiles); await cancelled.auth.restore();
+  assert.equal(cancelled.auth.active()!.key, api);
+  await f.auth.begin(); await f.auth.complete(f.callback());
+  const chatgpt = f.auth.active()!.key;
+  const afterLogin = fixture(t, {}, f.store, f.profiles); await afterLogin.auth.restore();
+  assert.equal(afterLogin.auth.active(), undefined); assert.equal(afterLogin.auth.status().accounts.length, 1);
+  const saved = JSON.stringify(await f.profiles.read());
+  for (const secret of ['test-access', 'test-refresh', 'test-id']) assert.equal(saved.includes(secret), false);
+  await f.auth.select(api); await f.auth.select(chatgpt);
+  const afterSelection = fixture(t, {}, f.store, f.profiles); await afterSelection.auth.restore();
+  assert.equal(afterSelection.auth.active(), undefined);
+  assert.equal((await afterSelection.auth.access(api)).accessToken, 'saved-api-key');
+});
+
+test('credential storage failures do not claim successful connection, deletion or billing switches', async t => {
+  let saved: ApiProfileData | undefined, fail = false;
+  const profiles: ApiProfileStore = {
+    read: async () => structuredClone(saved),
+    write: async data => { if (fail) throw new Error('private storage diagnostics'); saved = structuredClone(data); },
+  };
+  const f = fixture(t, {}, undefined, profiles);
+  await f.auth.begin(); await f.auth.complete(f.callback()); const chatgpt = f.auth.active()!.key;
+  await f.auth.useApiKey('first-key', DEFAULT_API_BASE_URL); const api = f.auth.active()!.key;
+  fail = true;
+  const safeStorageError = (error: unknown) => error instanceof AppError && error.code === 'credential_storage_failed' &&
+    !JSON.stringify(error.toJSON()).includes('private storage diagnostics');
+  await assert.rejects(f.auth.useApiKey('unsaved-key', DEFAULT_API_BASE_URL), safeStorageError);
+  assert.equal(f.auth.active()!.key, api); assert.equal(f.auth.status().accounts.length, 2);
+  await assert.rejects(f.auth.logout(api), safeStorageError);
+  assert.equal((await f.auth.access(api)).accessToken, 'first-key'); assert.equal(f.auth.status().signingOut, false);
+  await assert.rejects(f.auth.select(chatgpt), safeStorageError);
+  assert.equal(f.auth.active()!.key, api);
+  fail = false;
+  const reopened = fixture(t, {}, f.store, profiles); await reopened.auth.restore();
+  assert.equal(reopened.auth.active()!.key, api);
+  const unreadable = fixture(t, {}, undefined, { read: async () => { throw new Error('secret'); }, write: async () => {} });
+  await assert.rejects(unreadable.auth.restore(), safeStorageError);
+  assert.deepEqual(unreadable.auth.status().accounts, []);
+});
+
+test('cancel and close roll back a just-committed API save before publishing credentials', async t => {
+  for (const action of ['cancel', 'close'] as const) {
+    let saved: ApiProfileData | undefined, pause = false, writing = false;
+    const gate = deferred<void>();
+    const profiles: ApiProfileStore = {
+      read: async () => structuredClone(saved),
+      async write(data) {
+        saved = structuredClone(data);
+        if (pause) { pause = false; writing = true; await gate.promise; }
+      },
+    };
+    const f = fixture(t, {}, undefined, profiles);
+    await f.auth.useApiKey('previous-key', DEFAULT_API_BASE_URL); const previous = f.auth.active()!.key;
+    pause = true;
+    const connecting = f.auth.useApiKey('cancelled-key', 'https://provider.example/api');
+    const rejected = assert.rejects(connecting, (error: unknown) => error instanceof AppError && error.code === 'cancelled');
+    await until(() => writing);
+    if (action === 'cancel') f.auth.cancel(); else f.auth.close();
+    gate.resolve(); await rejected;
+    assert.equal(f.auth.status().accounts.length, action === 'close' ? 0 : 1);
+    const reopened = fixture(t, {}, undefined, profiles); await reopened.auth.restore();
+    assert.equal(reopened.auth.active()!.key, previous); assert.equal(reopened.auth.status().accounts.length, 1);
+  }
+});
+
+test('overlapping profile writes serialize cancellation rollback before saving the replacement', async t => {
+  let saved: ApiProfileData | undefined, writing = false, first = true;
+  const gate = deferred<void>();
+  const profiles: ApiProfileStore = {
+    read: async () => structuredClone(saved),
+    async write(data) {
+      saved = structuredClone(data);
+      if (first) { first = false; writing = true; await gate.promise; }
+    },
+  };
+  const f = fixture(t, {}, undefined, profiles);
+  const abandoned = f.auth.useApiKey('abandoned-key', DEFAULT_API_BASE_URL);
+  const rejected = assert.rejects(abandoned, (error: unknown) => error instanceof AppError && error.code === 'cancelled');
+  await until(() => writing);
+  const replacement = f.auth.useApiKey('replacement-key', 'http://localhost:8787/prefix/v1');
+  gate.resolve(); await rejected; await replacement;
+  const reopened = fixture(t, {}, undefined, profiles); await reopened.auth.restore();
+  assert.equal(reopened.auth.status().accounts.length, 1);
+  assert.equal((await reopened.auth.access(reopened.auth.active()!.key)).accessToken, 'replacement-key');
+});
+
+test('failed cancellation rollback reports uncertain saved state rather than claiming the key was removed', async t => {
+  const gate = deferred<void>(); let writing = false, writes = 0, saved: ApiProfileData | undefined;
+  const profiles: ApiProfileStore = {
+    read: async () => structuredClone(saved),
+    async write(data) {
+      if (++writes > 1) throw new Error('rollback failed');
+      saved = structuredClone(data); writing = true; await gate.promise;
+    },
+  };
+  const f = fixture(t, {}, undefined, profiles);
+  const connecting = f.auth.useApiKey('uncertain-key', DEFAULT_API_BASE_URL);
+  const rejected = assert.rejects(connecting, (error: unknown) => error instanceof AppError && error.code === 'credential_storage_failed');
+  await until(() => writing); f.auth.cancel(); gate.resolve(); await rejected;
+  assert.deepEqual(f.auth.status().accounts, []);
+});
+
+test('failed OAuth completion keeps the explicit API selection for the next runtime', async t => {
+  const f = fixture(t, { fetch: async () => Response.json({ error: 'invalid_grant' }, { status: 400 }) });
+  await f.auth.useApiKey('previous-api-key', DEFAULT_API_BASE_URL); const api = f.auth.active()!.key;
+  await f.auth.begin(); await assert.rejects(f.auth.complete(f.callback()));
+  assert.equal(f.auth.active()!.key, api);
+  const reopened = fixture(t, {}, f.store, f.profiles); await reopened.auth.restore();
+  assert.equal(reopened.auth.active()!.key, api);
 });
